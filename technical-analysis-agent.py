@@ -111,7 +111,7 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
             near_fib = abs(df['close'].iloc[-1] - fib_618) / df['close'].iloc[-1] < 0.02  # Relaxed to 2%
             fib_score = 0.5 if near_fib else 0
             
-            # Candlestick patterns with correct identifiers
+            # Candlestick patterns
             candle_patterns = ta.cdl_pattern(df['open'], df['high'], df['low'], df['close'], 
                                            name=['CDLDOJI', 'CDLENGULFING', 'CDLHAMMER', 'CDLINVERTEDHAMMER'])
             logger.info(f"Candlestick patterns result for {tf}: {candle_patterns if candle_patterns is not None else 'None'}")
@@ -135,13 +135,11 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
             tf_score = (trend_score + rsi_score + macd_score + bb_score + stoch_score + volume_score + fib_score + pattern_score) * scores.get(tf, 0.1)
             confluence_score += tf_score
             
+            # Results dictionary without MACD, Stochastic, and Bollinger columns
             results.append({
                 "Timeframe": tf,
                 "Trend": "uptrend" if trend_score > 0 else "downtrend",
                 "RSI": f"{rsi:.2f} ({'overbought' if rsi > 70 else 'oversold' if rsi < 30 else 'neutral'})",
-                "MACD": "bullish" if macd_score > 0 else "bearish",
-                "Bollinger": bb_signal,
-                "Stochastic": stoch_signal,
                 "Volume": volume_signal,
                 "Candle Pattern": "Bullish" if bullish_pattern else "Bearish" if bearish_pattern else "None",
                 "Fib 61.8%": f"{fib_618:.4f}" + (" (near)" if near_fib else ""),
@@ -156,9 +154,6 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
                 "Timeframe": tf,
                 "Trend": "N/A",
                 "RSI": "N/A",
-                "MACD": "N/A",
-                "Bollinger": "N/A",
-                "Stochastic": "N/A",
                 "Volume": "N/A",
                 "Candle Pattern": "N/A",
                 "Fib 61.8%": "N/A",
