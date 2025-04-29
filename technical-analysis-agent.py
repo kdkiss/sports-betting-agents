@@ -65,7 +65,7 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
     for tf in scan_timeframes:
         try:
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
-            logger.info(f"Raw OHLCV data for {tf}: {ohlcv[:5]}")  # Log first 5 rows
+            logger.info(f"Raw OHLCV data for {tf} (first 5 rows): {ohlcv[:5]}")
             if not ohlcv or len(ohlcv) < 50:  # Need at least 50 candles for indicators
                 raise ValueError(f"Insufficient data for timeframe {tf}: {len(ohlcv)} candles")
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -110,10 +110,12 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
             near_fib = abs(df['close'].iloc[-1] - fib_618) / df['close'].iloc[-1] < 0.02  # Relaxed to 2%
             fib_score = 0.5 if near_fib else 0
             
-            # Candlestick patterns
-            candle_patterns = ta.cdl_pattern(df['open'], df['high'], df['low'], df['close'], name=['doji', 'engulfing', 'hammer', 'invertedhammer'])
-            bullish_pattern = any(candle_patterns[c].iloc[-1] > 0 for c in ['hammer', 'engulfing'])
-            bearish_pattern = any(candle_patterns[c].iloc[-1] < 0 for c in ['engulfing'])
+            # Candlestick patterns with correct identifiers
+            candle_patterns = ta.cdl_pattern(df['open'], df['high'], df['low'], df['close'], 
+                                           name=['CDLDOJI', 'CDLENGULFING', 'CDLHAMMER', 'CDLINVERTEDHAMMER'])
+            logger.info(f"Candlestick patterns for {tf}: {candle_patterns.columns.tolist()}")
+            bullish_pattern = any(candle_patterns[c].iloc[-1] > 0 for c in ['CDLHAMMER', 'CDLENGULFING'])
+            bearish_pattern = any(candle_patterns[c].iloc[-1] < 0 for c in ['CDLENGULFING'])
             pattern_score = 0.5 if bullish_pattern else (-0.5 if bearish_pattern else 0)
             
             # Risk management
