@@ -60,6 +60,7 @@ def fetch_ohlcv_ccxt(symbol, timeframe='1d', limit=90):
 def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
     exchange = ccxt.kraken({'enableRateLimit': True})
     results = []
+    risk_management_data = []  # Store risk management data separately
     scores = {'1d': 0.5, '4h': 0.3, '1h': 0.2}  # Weight by timeframe
     confluence_score = 0
     for tf in scan_timeframes:
@@ -135,36 +136,55 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
             tf_score = (trend_score + rsi_score + macd_score + bb_score + stoch_score + volume_score + fib_score + pattern_score) * scores.get(tf, 0.1)
             confluence_score += tf_score
             
-            # Results dictionary without MACD, Stochastic, and Bollinger columns
-            results.append({
+            # Base result dictionary (always included)
+            result = {
                 "Timeframe": tf,
                 "Trend": "uptrend" if trend_score > 0 else "downtrend",
                 "RSI": f"{rsi:.2f} ({'overbought' if rsi > 70 else 'oversold' if rsi < 30 else 'neutral'})",
                 "Volume": volume_signal,
                 "Candle Pattern": "Bullish" if bullish_pattern else "Bearish" if bearish_pattern else "None",
-                "Fib 61.8%": f"{fib_618:.4f}" + (" (near)" if near_fib else ""),
+                "Fib 61.8%": f"{fib_618:.4f}" + (" (near)" if near_fib else "")
+            }
+            
+            # Store risk management data separately (to be added later if needed)
+            risk_management = {
                 "Stop Loss (Long)": f"{stop_loss_long:.4f}",
                 "Take Profit (Long)": f"{take_profit_long:.4f}",
                 "Stop Loss (Short)": f"{stop_loss_short:.4f}",
                 "Take Profit (Short)": f"{take_profit_short:.4f}"
-            })
+            }
+            
+            results.append(result)
+            risk_management_data.append(risk_management)
+            
         except Exception as e:
             logger.error(f"Error in scan for {tf}: {e}")
-            results.append({
+            result = {
                 "Timeframe": tf,
                 "Trend": "N/A",
                 "RSI": "N/A",
                 "Volume": "N/A",
                 "Candle Pattern": "N/A",
-                "Fib 61.8%": "N/A",
+                "Fib 61.8%": "N/A"
+            }
+            risk_management = {
                 "Stop Loss (Long)": "N/A",
                 "Take Profit (Long)": "N/A",
                 "Stop Loss (Short)": "N/A",
                 "Take Profit (Short)": "N/A"
-            })
+            }
+            results.append(result)
+            risk_management_data.append(risk_management)
     
     df_results = pd.DataFrame(results)
     signal = "Strong LONG" if confluence_score > 1.5 else "Strong SHORT" if confluence_score < -1.5 else "Neutral"
+    
+    # If a high-probability setup is detected, add risk management columns
+    if signal in ["Strong LONG", "Strong SHORT"]:
+        for i in range(len(results)):
+            results[i].update(risk_management_data[i])
+        df_results = pd.DataFrame(results)
+    
     return df_results, signal, confluence_score
 
 # --- Scan Button ---
