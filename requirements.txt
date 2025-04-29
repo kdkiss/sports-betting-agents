@@ -7,4 +7,3 @@ python-dotenv
 ccxt
 pandas-ta
 numpy<2.0
-TA-lib
