@@ -13,7 +13,7 @@ api_key = st.text_input("Enter your Groq API Key", type="password")
 # --- Load and filter symbols ---
 @st.cache_data(show_spinner="Loading trading pairs from Binance...")
 def get_filtered_symbols():
-    exchange = ccxt.bybit()
+    exchange = ccxt.kraken()
     markets = exchange.load_markets()
     filtered = sorted([s for s in markets.keys() if (s.endswith('/USDT') or s.endswith('/BTC')) and ':' not in s])
     return filtered
