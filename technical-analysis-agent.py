@@ -1,7 +1,6 @@
 import streamlit as st
-import ccxt
+import requests
 import pandas as pd
-import pandas_ta as ta
 import matplotlib.pyplot as plt
 from groq import Groq
 
@@ -10,120 +9,58 @@ st.title("Crypto Technical and On-Chain Analysis")
 
 api_key = st.text_input("Enter your Groq API Key", type="password")
 
-# --- Load and filter symbols ---
-@st.cache_data(show_spinner="Loading trading pairs from Binance...")
-def get_filtered_symbols():
-    exchange = ccxt.binance()
-    markets = exchange.load_markets()
-    filtered = sorted([s for s in markets.keys() if (s.endswith('/USDT') or s.endswith('/BTC')) and ':' not in s])
-    return filtered
+# --- List of supported CoinGecko coins and mapping to symbols ---
+@st.cache_data(show_spinner="Loading supported coins from CoinGecko...")
+def get_coins():
+    url = "https://api.coingecko.com/api/v3/coins/list"
+    r = requests.get(url)
+    coins = r.json()
+    # Only keep major coins for usability
+    coins = [c for c in coins if c['symbol'].upper() in ['BTC', 'ETH', 'BNB', 'SOL', 'ADA', 'XRP', 'DOGE', 'AVAX', 'DOT', 'MATIC', 'LINK', 'SHIB', 'TRX', 'LTC', 'BCH', 'UNI', 'ATOM', 'FIL', 'ETC', 'ICP', 'APT']]
+    return {f"{c['symbol'].upper()}/{c['id']}": c['id'] for c in coins}
 
-filtered_symbols = get_filtered_symbols()
+coin_map = get_coins()
+coin_choices = list(coin_map.keys())
+symbol = st.selectbox("Select a coin:", coin_choices, index=coin_choices.index("BTC/bitcoin") if "BTC/bitcoin" in coin_choices else 0)
+coin_id = coin_map[symbol]
 
-symbol = st.selectbox("Select a /USDT or /BTC pair:", filtered_symbols, index=filtered_symbols.index("BTC/USDT") if "BTC/USDT" in filtered_symbols else 0)
-timeframes = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w', '1M']
-timeframe = st.selectbox("Select timeframe:", timeframes, index=timeframes.index('1d'))
-limit = st.slider("Number of candles to fetch", min_value=30, max_value=500, value=90, step=10)
+# --- Timeframe selection (CoinGecko supports: 1, 7, 14, 30, 90, 180, 365, max days) ---
+timeframes = {
+    "1d": 1, "7d": 7, "14d": 14, "30d": 30, "90d": 90, "180d": 180, "1y": 365, "max": "max"
+}
+tf_label = st.selectbox("Select timeframe:", list(timeframes.keys()), index=1)
+days = timeframes[tf_label]
 
-# --- Fetch OHLCV data ---
-def fetch_ohlcv_ccxt(symbol, timeframe='1d', limit=90):
-    exchange = ccxt.binance()
-    try:
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-    except Exception as e:
-        st.error(f"Error fetching data: {e}")
+# --- Fetch OHLCV data from CoinGecko ---
+@st.cache_data(show_spinner="Fetching OHLCV data...")
+def fetch_ohlcv_coingecko(coin_id, days):
+    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
+    params = {"vs_currency": "usd", "days": days, "interval": "daily"}
+    r = requests.get(url, params=params)
+    if r.status_code != 200:
         return None
-    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-    df.set_index('timestamp', inplace=True)
+    data = r.json()
+    # CoinGecko returns [timestamp, price] for prices, [timestamp, volume] for volumes, [timestamp, open, high, low, close] for ohlc
+    ohlc = data.get("prices", [])
+    if "ohlc" in data:
+        ohlc = data["ohlc"]
+    else:
+        # Approximate OHLC from prices if not available
+        ohlc = [[x[0], x[1], x[1], x[1], x[1]] for x in data["prices"]]
+    volume = {x[0]: x[1] for x in data.get("total_volumes", [])}
+    df = pd.DataFrame(ohlc, columns=["timestamp", "open", "high", "low", "close"])
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+    df.set_index("timestamp", inplace=True)
+    df["volume"] = df.index.map(lambda x: volume.get(int(x.timestamp() * 1000), None))
     return df
 
-# --- Multi-Timeframe Scan Function ---
-def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
-    exchange = ccxt.binance()
-    results = []
-    for tf in scan_timeframes:
-        try:
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df.set_index('timestamp', inplace=True)
-            df['MA20'] = df['close'].rolling(window=20).mean()
-            df['MA50'] = df['close'].rolling(window=50).mean()
-            df['RSI'] = ta.rsi(df['close'], length=14)
-            macd = ta.macd(df['close'])
-            df['MACD'] = macd['MACD_12_26_9']
-            # Trend
-            trend = "uptrend" if df['MA20'][-1] > df['MA50'][-1] else "downtrend"
-            # RSI
-            rsi = df['RSI'][-1]
-            rsi_signal = "overbought" if rsi > 70 else "oversold" if rsi < 30 else "neutral"
-            # MACD
-            macd_cross = "bullish" if df['MACD'][-1] > 0 else "bearish"
-            # Price near Fibonacci (last 50 candles)
-            lookback = min(50, len(df))
-            recent_high = df['high'][-lookback:].max()
-            recent_low = df['low'][-lookback:].min()
-            fib_618 = recent_high - (recent_high - recent_low) * 0.618
-            near_fib = abs(df['close'][-1] - fib_618) / df['close'][-1] < 0.01  # within 1%
-            fib_signal = f"{fib_618:.4f}" + (" (near)" if near_fib else "")
-            # Append results
-            results.append({
-                "Timeframe": tf,
-                "Trend": trend,
-                "RSI": f"{rsi:.2f} ({rsi_signal})",
-                "MACD": macd_cross,
-                "Fib 61.8%": fib_signal
-            })
-            # lookback = min(50, len(df))
-            # recent_high = df['high'][-lookback:].max()
-            # recent_low = df['low'][-lookback:].min()
-            # fib_618 = recent_high - (recent_high - recent_low) * 0.618
-            # near_fib = abs(df['close'][-1] - fib_618) / df['close'][-1] < 0.01  # within 1%
-            # fib_signal = "near 61.8%" if near_fib else ""
-            # # Append results
-            # results.append({
-            #     "Timeframe": tf,
-            #     "Trend": trend,
-            #     "RSI": f"{rsi:.2f} ({rsi_signal})",
-            #     "MACD": macd_cross,
-            #     "Fib 61.8%": fib_signal
-            # })
-        except Exception as e:
-            results.append({
-                "Timeframe": tf,
-                "Trend": "N/A",
-                "RSI": "N/A",
-                "MACD": "N/A",
-                "Fib 61.8%": "N/A"
-            })
-    return pd.DataFrame(results)
+ohlcv = fetch_ohlcv_coingecko(coin_id, days)
+if ohlcv is None or ohlcv.empty:
+    st.error("Failed to fetch data from CoinGecko.")
+    st.stop()
 
-# --- Scan Button ---
-if st.button("Scan for High-Probability Setups"):
-    scan_timeframes = ['1d', '4h', '1h']
-    with st.spinner("Scanning multiple timeframes..."):
-        scan_results = scan_timeframes_for_confluence(symbol, scan_timeframes)
-        st.write("### Multi-Timeframe Scan Results")
-        st.table(scan_results)
-        # Simple confluence logic: all uptrend or all downtrend
-        if all(scan_results['Trend'] == "uptrend"):
-            st.success("High-probability LONG setup: All timeframes in uptrend.")
-        elif all(scan_results['Trend'] == "downtrend"):
-            st.success("High-probability SHORT setup: All timeframes in downtrend.")
-        else:
-            st.info("No strong trend confluence detected. Await better alignment for higher probability.")
-
-# --- Main Chart and AI Analysis ---
-with st.spinner("Fetching price data..."):
-    ohlcv = fetch_ohlcv_ccxt(symbol, timeframe, limit)
-    if ohlcv is not None and not ohlcv.empty:
-        latest_price = ohlcv['close'][-1]
-        st.write(f"**Latest {symbol} Price:** {latest_price:,.6f}")
-    else:
-        st.stop()
-
-# --- Technical indicators ---
+# --- Technical indicators (using pandas_ta if you want) ---
+import pandas_ta as ta
 ohlcv['MA20'] = ohlcv['close'].rolling(window=20).mean()
 ohlcv['MA50'] = ohlcv['close'].rolling(window=50).mean()
 ohlcv['RSI'] = ta.rsi(ohlcv['close'], length=14)
@@ -156,7 +93,7 @@ if ohlcv['MA20'].notnull().any():
     ohlcv['MA20'].plot(ax=ax, label='MA20', color='orange')
 if ohlcv['MA50'].notnull().any():
     ohlcv['MA50'].plot(ax=ax, label='MA50', color='green')
-ax.set_title(f"{symbol} Price Chart ({limit} candles, {timeframe})")
+ax.set_title(f"{symbol} Price Chart ({days} days)")
 ax.set_ylabel("Price")
 ax.legend()
 st.pyplot(fig)
@@ -166,8 +103,8 @@ trend = "uptrend" if ohlcv['close'][-1] > ohlcv['close'][0] else "downtrend"
 fib_str = "\n".join([f"{level}: {price:.6f}" for level, price in fib_levels.items()])
 data_summary = f"""
 Crypto Pair: {symbol}
-Timeframe: {timeframe}
-Latest Price: {latest_price:,.6f}
+Timeframe: {tf_label}
+Latest Price: {ohlcv['close'][-1]:,.6f}
 20-period MA: {ohlcv['MA20'][-1]:,.6f}
 50-period MA: {ohlcv['MA50'][-1]:,.6f}
 RSI (14): {ohlcv['RSI'][-1]:.2f}
@@ -195,7 +132,7 @@ You are a highly skilled Crypto Technical and On-Chain Analyst. Using the provid
 
 Format your answer as a structured technical analysis summary.
 """
-    user_prompt = f"""Here is the latest data for {symbol} on the {timeframe} timeframe:
+    user_prompt = f"""Here is the latest data for {symbol} on the {tf_label} timeframe:
 {data_summary}
 Please provide a detailed technical analysis and actionable recommendations."""
     with st.spinner("Analyzing with AI..."):
