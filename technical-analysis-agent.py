@@ -72,9 +72,6 @@ if isinstance(macd, pd.DataFrame) and macd.shape[1] >= 3:
     ohlcv['MACDs'] = macd.iloc[:, 2]
 else:
     ohlcv['MACD'] = ohlcv['MACDh'] = ohlcv['MACDs'] = pd.NA
-ohlcv['MACD'] = macd['MACD_12_26_9']
-ohlcv['MACDh'] = macd['MACDh_12_26_9']
-ohlcv['MACDs'] = macd['MACDs_12_26_9']
 
 # --- Fibonacci Calculation (last 50 candles or less) ---
 lookback = min(50, len(ohlcv))
