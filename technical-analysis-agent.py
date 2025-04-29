@@ -66,6 +66,12 @@ ohlcv['MA20'] = ohlcv['close'].rolling(window=20).mean()
 ohlcv['MA50'] = ohlcv['close'].rolling(window=50).mean()
 ohlcv['RSI'] = ta.rsi(ohlcv['close'], length=14)
 macd = ta.macd(ohlcv['close'])
+if isinstance(macd, pd.DataFrame) and macd.shape[1] >= 3:
+    ohlcv['MACD'] = macd.iloc[:, 0]
+    ohlcv['MACDh'] = macd.iloc[:, 1]
+    ohlcv['MACDs'] = macd.iloc[:, 2]
+else:
+    ohlcv['MACD'] = ohlcv['MACDh'] = ohlcv['MACDs'] = pd.NA
 ohlcv['MACD'] = macd['MACD_12_26_9']
 ohlcv['MACDh'] = macd['MACDh_12_26_9']
 ohlcv['MACDs'] = macd['MACDs_12_26_9']
