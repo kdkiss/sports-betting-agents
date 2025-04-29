@@ -27,7 +27,7 @@ limit = st.slider("Number of candles to fetch", min_value=30, max_value=500, val
 
 # --- Fetch OHLCV data ---
 def fetch_ohlcv_ccxt(symbol, timeframe='1d', limit=90):
-    exchange = ccxt.binance()
+    exchange = ccxt.kraken()
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
     except Exception as e:
@@ -40,7 +40,7 @@ def fetch_ohlcv_ccxt(symbol, timeframe='1d', limit=90):
 
 # --- Multi-Timeframe Scan Function ---
 def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
-    exchange = ccxt.binance()
+    exchange = ccxt.kraken()
     results = []
     for tf in scan_timeframes:
         try:
