@@ -11,8 +11,9 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Suppress pandas_ta syntax warning and candlestick pattern warnings
+# Suppress pandas_ta warnings
 warnings.filterwarnings("ignore", category=SyntaxWarning)
+warnings.filterwarnings("ignore", message=r"invalid escape sequence '\\g'")
 warnings.filterwarnings("ignore", message="There is no candle pattern named")
 
 st.set_page_config(page_title="Crypto Technical and On-Chain Analysis", page_icon="📊")
@@ -61,22 +62,22 @@ def fetch_ohlcv_ccxt(symbol, timeframe='1d', limit=90):
 def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
     exchange = ccxt.kraken({'enableRateLimit': True})
     results = []
-    risk_management_data = []  # Store risk management data separately
-    scores = {'1d': 0.5, '4h': 0.3, '1h': 0.2}  # Weight by timeframe
+    risk_management_data = []
+    scores = {'1d': 0.5, '4h': 0.3, '1h': 0.2}
     confluence_score = 0
     for tf in scan_timeframes:
         try:
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
             logger.info(f"Raw OHLCV data for {tf} (first 5 rows): {ohlcv[:5]}")
             logger.info(f"Number of candles fetched for {tf}: {len(ohlcv)}")
-            if not ohlcv or len(ohlcv) < 50:  # Need at least 50 candles for indicators
+            if not ohlcv or len(ohlcv) < 50:
                 raise ValueError(f"Insufficient data for timeframe {tf}: {len(ohlcv)} candles")
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             df.set_index('timestamp', inplace=True)
             if not all(col in df.columns for col in ['open', 'high', 'low', 'close', 'volume']):
                 raise ValueError(f"Missing required columns in OHLCV data for {tf}")
-            
+
             # Indicators
             df['MA20'] = df['close'].rolling(window=20).mean()
             df['MA50'] = df['close'].rolling(window=50).mean()
@@ -91,7 +92,7 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
             df['Stoch_K'] = stoch['STOCHk_14_3_3']
             df['Volume_MA10'] = df['volume'].rolling(window=10).mean()
             df['ATR'] = ta.atr(df['high'], df['low'], df['close'], length=14)
-            
+
             # Signals
             trend_score = 1 if df['MA20'].iloc[-1] > df['MA50'].iloc[-1] else -1
             rsi = df['RSI'].iloc[-1]
@@ -104,40 +105,50 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
             stoch_score = -0.5 if stoch_signal == "overbought" else 0.5 if stoch_signal == "oversold" else 0
             volume_signal = "strong" if df['volume'].iloc[-1] > df['Volume_MA10'].iloc[-1] * 1.5 else "weak"
             volume_score = 0.5 if volume_signal == "strong" else -0.5
-            
+
             # Fibonacci proximity
             lookback = min(50, len(df))
             recent_high = df['high'][-lookback:].max()
             recent_low = df['low'][-lookback:].min()
             fib_618 = recent_high - (recent_high - recent_low) * 0.618
-            near_fib = abs(df['close'].iloc[-1] - fib_618) / df['close'].iloc[-1] < 0.02  # Relaxed to 2%
+            near_fib = abs(df['close'].iloc[-1] - fib_618) / df['close'].iloc[-1] < 0.02
             fib_score = 0.5 if near_fib else 0
-            
-            # Candlestick patterns with correct pandas_ta names
+
+            # Candlestick patterns
             candle_patterns = ta.cdl_pattern(df['open'], df['high'], df['low'], df['close'], 
                                            name=['doji', 'engulfing', 'hammer', 'invertedhammer'])
             logger.info(f"Candlestick patterns result for {tf}: {candle_patterns if candle_patterns is not None else 'None'}")
+            
+            bullish_pattern = False
+            bearish_pattern = False
+            pattern_score = 0
+            
             if candle_patterns is not None:
                 logger.info(f"Candlestick patterns columns for {tf}: {candle_patterns.columns.tolist()}")
-                bullish_pattern = any(candle_patterns[c].iloc[-1] > 0 for c in ['hammer', 'engulfing'])
-                bearish_pattern = any(candle_patterns[c].iloc[-1] < 0 for c in ['engulfing'])
+                # Check for patterns using the actual column names
+                for col in candle_patterns.columns:
+                    if 'CDL_HAMMER' in col and candle_patterns[col].iloc[-1] > 0:
+                        bullish_pattern = True
+                    elif 'CDL_ENGULFING' in col and candle_patterns[col].iloc[-1] > 0:
+                        bullish_pattern = True
+                    elif 'CDL_ENGULFING' in col and candle_patterns[col].iloc[-1] < 0:
+                        bearish_pattern = True
             else:
                 logger.info(f"No candlestick patterns detected for {tf}")
-                bullish_pattern = False
-                bearish_pattern = False
+
             pattern_score = 0.5 if bullish_pattern else (-0.5 if bearish_pattern else 0)
-            
+
             # Risk management
             stop_loss_long = df['close'].iloc[-1] - 2 * df['ATR'].iloc[-1]
             take_profit_long = df['close'].iloc[-1] + 3 * df['ATR'].iloc[-1]
             stop_loss_short = df['close'].iloc[-1] + 2 * df['ATR'].iloc[-1]
             take_profit_short = df['close'].iloc[-1] - 3 * df['ATR'].iloc[-1]
-            
+
             # Total score for this timeframe
             tf_score = (trend_score + rsi_score + macd_score + bb_score + stoch_score + volume_score + fib_score + pattern_score) * scores.get(tf, 0.1)
             confluence_score += tf_score
-            
-            # Base result dictionary (always included)
+
+            # Base result dictionary
             result = {
                 "Timeframe": tf,
                 "Trend": "uptrend" if trend_score > 0 else "downtrend",
@@ -146,18 +157,17 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
                 "Candle Pattern": "Bullish" if bullish_pattern else "Bearish" if bearish_pattern else "None",
                 "Fib 61.8%": f"{fib_618:.4f}" + (" (near)" if near_fib else "")
             }
-            
-            # Store risk management data separately
+
             risk_management = {
                 "Stop Loss (Long)": f"{stop_loss_long:.4f}",
                 "Take Profit (Long)": f"{take_profit_long:.4f}",
                 "Stop Loss (Short)": f"{stop_loss_short:.4f}",
                 "Take Profit (Short)": f"{take_profit_short:.4f}"
             }
-            
+
             results.append(result)
             risk_management_data.append(risk_management)
-            
+
         except Exception as e:
             logger.error(f"Error in scan for {tf}: {e}")
             result = {
@@ -176,11 +186,10 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
             }
             results.append(result)
             risk_management_data.append(risk_management)
-    
+
     df_results = pd.DataFrame(results)
     signal = "Strong LONG" if confluence_score > 1.5 else "Strong SHORT" if confluence_score < -1.5 else "Neutral"
     
-    # If a high-probability setup is detected, add risk management columns
     if signal in ["Strong LONG", "Strong SHORT"]:
         for i in range(len(results)):
             results[i].update(risk_management_data[i])
@@ -198,7 +207,7 @@ if st.button("Scan for High-Probability Setups"):
         if score > 1.5:
             st.success(f"High-probability LONG setup (Score: {score:.2f})")
         elif score < -1.5:
-            st.success(f"High-propability SHORT setup (Score: {score:.2f})")
+            st.success(f"High-probability SHORT setup (Score: {score:.2f})")
         else:
             st.info(f"No strong setup detected (Score: {score:.2f})")
 
@@ -228,7 +237,7 @@ ohlcv['Stoch_D'] = stoch['STOCHd_14_3_3']
 ohlcv['Volume_MA10'] = ohlcv['volume'].rolling(window=10).mean()
 ohlcv['ATR'] = ta.atr(ohlcv['high'], ohlcv['low'], ohlcv['close'], length=14)
 
-# --- Fibonacci Calculation (last 50 candles or less) ---
+# --- Fibonacci Calculation ---
 lookback = min(50, len(ohlcv))
 recent_high = ohlcv['high'][-lookback:].max()
 recent_low = ohlcv['low'][-lookback:].min()
@@ -238,7 +247,7 @@ fib_levels['0%'] = recent_high
 fib_levels['100%'] = recent_low
 fib_df = pd.DataFrame(list(fib_levels.items()), columns=['Level', 'Price']).sort_values('Price', ascending=False)
 
-# --- Show indicators and Fibonacci in Streamlit ---
+# --- Show indicators and Fibonacci ---
 st.write("#### Key Technical Indicators (latest values)")
 st.table(ohlcv[['close', 'MA20', 'MA50', 'RSI', 'MACD', 'Stoch_K', 'Stoch_D', 'BB_upper', 'BB_lower', 'ATR', 'volume']].tail(1).T)
 
@@ -247,7 +256,6 @@ st.table(fib_df)
 
 # --- Display chart ---
 fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 8), gridspec_kw={'height_ratios': [3, 1, 1]})
-# Price and MAs
 ohlcv['close'].plot(ax=ax1, label='Close', color='blue')
 if ohlcv['MA20'].notnull().any():
     ohlcv['MA20'].plot(ax=ax1, label='MA20', color='orange')
@@ -261,13 +269,11 @@ for level, price in fib_levels.items():
 ax1.set_title(f"{symbol} Price Chart ({limit} candles, {timeframe})")
 ax1.set_ylabel("Price")
 ax1.legend()
-# RSI
 ohlcv['RSI'].plot(ax=ax2, label='RSI', color='purple')
 ax2.axhline(70, color='red', linestyle='--')
 ax2.axhline(30, color='green', linestyle='--')
 ax2.set_title("RSI (14)")
 ax2.legend()
-# MACD
 ohlcv['MACD'].plot(ax=ax3, label='MACD', color='blue')
 ohlcv['MACDs'].plot(ax=ax3, label='Signal', color='orange')
 ax3.bar(ohlcv.index, ohlcv['MACDh'], color='gray', alpha=0.3, label='Histogram')
