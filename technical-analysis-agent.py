@@ -5,6 +5,11 @@ import pandas_ta as ta
 import matplotlib.pyplot as plt
 from groq import Groq
 import warnings
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Suppress pandas_ta syntax warning
 warnings.filterwarnings("ignore", category=SyntaxWarning)
@@ -18,7 +23,7 @@ api_key = st.text_input("Enter your Groq API Key", type="password")
 @st.cache_data(show_spinner="Loading trading pairs from Kraken...")
 def get_filtered_symbols():
     try:
-        exchange = ccxt.kraken()
+        exchange = ccxt.kraken({'enableRateLimit': True})
         markets = exchange.load_markets()
         filtered = sorted([s for s in markets.keys() if (s.endswith('/USDT') or s.endswith('/BTC')) and ':' not in s])
         return filtered
@@ -38,9 +43,11 @@ limit = st.slider("Number of candles to fetch", min_value=30, max_value=500, val
 # --- Fetch OHLCV data ---
 @st.cache_data(show_spinner="Fetching price data...")
 def fetch_ohlcv_ccxt(symbol, timeframe='1d', limit=90):
-    exchange = ccxt.kraken()
+    exchange = ccxt.kraken({'enableRateLimit': True})
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+        if not ohlcv:
+            raise ValueError("No data returned from Kraken API")
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df.set_index('timestamp', inplace=True)
@@ -51,16 +58,21 @@ def fetch_ohlcv_ccxt(symbol, timeframe='1d', limit=90):
 
 # --- Multi-Timeframe Scan Function ---
 def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
-    exchange = ccxt.kraken()
+    exchange = ccxt.kraken({'enableRateLimit': True})
     results = []
     scores = {'1d': 0.5, '4h': 0.3, '1h': 0.2}  # Weight by timeframe
     confluence_score = 0
     for tf in scan_timeframes:
         try:
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
+            logger.info(f"Raw OHLCV data for {tf}: {ohlcv[:5]}")  # Log first 5 rows
+            if not ohlcv or len(ohlcv) < 50:  # Need at least 50 candles for indicators
+                raise ValueError(f"Insufficient data for timeframe {tf}: {len(ohlcv)} candles")
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             df.set_index('timestamp', inplace=True)
+            if not all(col in df.columns for col in ['open', 'high', 'low', 'close', 'volume']):
+                raise ValueError(f"Missing required columns in OHLCV data for {tf}")
             
             # Indicators
             df['MA20'] = df['close'].rolling(window=20).mean()
@@ -78,16 +90,16 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
             df['ATR'] = ta.atr(df['high'], df['low'], df['close'], length=14)
             
             # Signals
-            trend_score = 1 if df['MA20'][-1] > df['MA50'][-1] else -1
-            rsi = df['RSI'][-1]
+            trend_score = 1 if df['MA20'].iloc[-1] > df['MA50'].iloc[-1] else -1
+            rsi = df['RSI'].iloc[-1]
             rsi_score = 1 if 30 < rsi < 70 else (-1 if rsi > 70 or rsi < 30 else 0)
-            macd_score = 1 if df['MACDh'][-1] > 0 and df['MACD'][-1] > 0 else -1
-            bb_signal = "near upper" if abs(df['close'][-1] - df['BB_upper'][-1]) / df['close'][-1] < 0.02 else \
-                        "near lower" if abs(df['close'][-1] - df['BB_lower'][-1]) / df['close'][-1] < 0.02 else "neutral"
+            macd_score = 1 if df['MACDh'].iloc[-1] > 0 and df['MACD'].iloc[-1] > 0 else -1
+            bb_signal = "near upper" if abs(df['close'].iloc[-1] - df['BB_upper'].iloc[-1]) / df['close'].iloc[-1] < 0.02 else \
+                        "near lower" if abs(df['close'].iloc[-1] - df['BB_lower'].iloc[-1]) / df['close'].iloc[-1] < 0.02 else "neutral"
             bb_score = -0.5 if bb_signal == "near upper" else 0.5 if bb_signal == "near lower" else 0
-            stoch_signal = "overbought" if df['Stoch_K'][-1] > 80 else "oversold" if df['Stoch_K'][-1] < 20 else "neutral"
+            stoch_signal = "overbought" if df['Stoch_K'].iloc[-1] > 80 else "oversold" if df['Stoch_K'].iloc[-1] < 20 else "neutral"
             stoch_score = -0.5 if stoch_signal == "overbought" else 0.5 if stoch_signal == "oversold" else 0
-            volume_signal = "strong" if df['volume'][-1] > df['Volume_MA10'][-1] * 1.5 else "weak"
+            volume_signal = "strong" if df['volume'].iloc[-1] > df['Volume_MA10'].iloc[-1] * 1.5 else "weak"
             volume_score = 0.5 if volume_signal == "strong" else -0.5
             
             # Fibonacci proximity
@@ -95,7 +107,7 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
             recent_high = df['high'][-lookback:].max()
             recent_low = df['low'][-lookback:].min()
             fib_618 = recent_high - (recent_high - recent_low) * 0.618
-            near_fib = abs(df['close'][-1] - fib_618) / df['close'][-1] < 0.02  # Relaxed to 2%
+            near_fib = abs(df['close'].iloc[-1] - fib_618) / df['close'].iloc[-1] < 0.02  # Relaxed to 2%
             fib_score = 0.5 if near_fib else 0
             
             # Candlestick patterns
@@ -105,10 +117,10 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
             pattern_score = 0.5 if bullish_pattern else (-0.5 if bearish_pattern else 0)
             
             # Risk management
-            stop_loss_long = df['close'][-1] - 2 * df['ATR'][-1]
-            take_profit_long = df['close'][-1] + 3 * df['ATR'][-1]
-            stop_loss_short = df['close'][-1] + 2 * df['ATR'][-1]
-            take_profit_short = df['close'][-1] - 3 * df['ATR'][-1]
+            stop_loss_long = df['close'].iloc[-1] - 2 * df['ATR'].iloc[-1]
+            take_profit_long = df['close'].iloc[-1] + 3 * df['ATR'].iloc[-1]
+            stop_loss_short = df['close'].iloc[-1] + 2 * df['ATR'].iloc[-1]
+            take_profit_short = df['close'].iloc[-1] - 3 * df['ATR'].iloc[-1]
             
             # Total score for this timeframe
             tf_score = (trend_score + rsi_score + macd_score + bb_score + stoch_score + volume_score + fib_score + pattern_score) * scores.get(tf, 0.1)
@@ -130,6 +142,7 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
                 "Take Profit (Short)": f"{take_profit_short:.4f}"
             })
         except Exception as e:
+            logger.error(f"Error in scan for {tf}: {e}")
             results.append({
                 "Timeframe": tf,
                 "Trend": "N/A",
@@ -169,7 +182,7 @@ with st.spinner("Fetching price data..."):
     ohlcv = fetch_ohlcv_ccxt(symbol, timeframe, limit)
     if ohlcv is None or ohlcv.empty:
         st.stop()
-    latest_price = ohlcv['close'][-1]
+    latest_price = ohlcv['close'].iloc[-1]
     st.write(f"**Latest {symbol} Price:** {latest_price:,.6f}")
 
 # --- Technical indicators ---
@@ -239,21 +252,21 @@ plt.tight_layout()
 st.pyplot(fig)
 
 # --- Prepare data summary for AI ---
-trend = "uptrend" if ohlcv['close'][-1] > ohlcv['close'][0] else "downtrend"
+trend = "uptrend" if ohlcv['close'].iloc[-1] > ohlcv['close'].iloc[0] else "downtrend"
 fib_str = "\n".join([f"{level}: {price:.6f}" for level, price in fib_levels.items()])
 data_summary = f"""
 Crypto Pair: {symbol}
 Timeframe: {timeframe}
 Latest Price: {latest_price:,.6f}
-20-period MA: {ohlcv['MA20'][-1]:,.6f}
-50-period MA: {ohlcv['MA50'][-1]:,.6f}
-RSI (14): {ohlcv['RSI'][-1]:.2f}
-Stochastic K/D: {ohlcv['Stoch_K'][-1]:.2f}/{ohlcv['Stoch_D'][-1]:.2f}
-MACD: {ohlcv['MACD'][-1]:.4f}
-Bollinger Bands: Upper={ohlcv['BB_upper'][-1]:.4f}, Lower={ohlcv['BB_lower'][-1]:.4f}
-ATR (14): {ohlcv['ATR'][-1]:.4f}
-Latest Volume: {ohlcv['volume'][-1]:,.2f}
-Volume Trend: {'Above' if ohlcv['volume'][-1] > ohlcv['Volume_MA10'][-1] else 'Below'} 10-period MA
+20-period MA: {ohlcv['MA20'].iloc[-1]:,.6f}
+50-period MA: {ohlcv['MA50'].iloc[-1]:,.6f}
+RSI (14): {ohlcv['RSI'].iloc[-1]:.2f}
+Stochastic K/D: {ohlcv['Stoch_K'].iloc[-1]:.2f}/{ohlcv['Stoch_D'].iloc[-1]:.2f}
+MACD: {ohlcv['MACD'].iloc[-1]:.4f}
+Bollinger Bands: Upper={ohlcv['BB_upper'].iloc[-1]:.4f}, Lower={ohlcv['BB_lower'].iloc[-1]:.4f}
+ATR (14): {ohlcv['ATR'].iloc[-1]:.4f}
+Latest Volume: {ohlcv['volume'].iloc[-1]:,.2f}
+Volume Trend: {'Above' if ohlcv['volume'].iloc[-1] > ohlcv['Volume_MA10'].iloc[-1] else 'Below'} 10-period MA
 Recent Price Trend: {trend}
 Fibonacci Retracement Levels (last {lookback} candles):
 {fib_str}
