@@ -6,3 +6,4 @@ groq
 python-dotenv
 ccxt
 pandas-ta
+numpy<2.0
