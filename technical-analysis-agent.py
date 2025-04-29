@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import pandas as pd
+import pandas_ta as ta
 import matplotlib.pyplot as plt
 from groq import Groq
 
@@ -9,19 +10,21 @@ st.title("Crypto Technical and On-Chain Analysis")
 
 api_key = st.text_input("Enter your Groq API Key", type="password")
 
-# --- List of supported CoinGecko coins and mapping to symbols ---
+# --- Load and filter symbols using CoinGecko ---
 @st.cache_data(show_spinner="Loading supported coins from CoinGecko...")
 def get_coins():
     url = "https://api.coingecko.com/api/v3/coins/list"
     r = requests.get(url)
     coins = r.json()
     # Only keep major coins for usability
-    coins = [c for c in coins if c['symbol'].upper() in ['BTC', 'ETH', 'BNB', 'SOL', 'ADA', 'XRP', 'DOGE', 'AVAX', 'DOT', 'MATIC', 'LINK', 'SHIB', 'TRX', 'LTC', 'BCH', 'UNI', 'ATOM', 'FIL', 'ETC', 'ICP', 'APT']]
-    return {f"{c['symbol'].upper()}/{c['id']}": c['id'] for c in coins}
+    coins = [c for c in coins if c['symbol'].upper() in [
+        'BTC', 'ETH', 'BNB', 'SOL', 'ADA', 'XRP', 'DOGE', 'AVAX', 'DOT', 'MATIC', 'LINK', 'SHIB', 'TRX', 'LTC', 'BCH', 'UNI', 'ATOM', 'FIL', 'ETC', 'ICP', 'APT'
+    ]]
+    return {f"{c['symbol'].upper()} / {c['id']}": c['id'] for c in coins}
 
 coin_map = get_coins()
 coin_choices = list(coin_map.keys())
-symbol = st.selectbox("Select a coin:", coin_choices, index=coin_choices.index("BTC/bitcoin") if "BTC/bitcoin" in coin_choices else 0)
+symbol = st.selectbox("Select a coin:", coin_choices, index=coin_choices.index("BTC / bitcoin") if "BTC / bitcoin" in coin_choices else 0)
 coin_id = coin_map[symbol]
 
 # --- Timeframe selection (CoinGecko supports: 1, 7, 14, 30, 90, 180, 365, max days) ---
@@ -40,18 +43,17 @@ def fetch_ohlcv_coingecko(coin_id, days):
     if r.status_code != 200:
         return None
     data = r.json()
-    # CoinGecko returns [timestamp, price] for prices, [timestamp, volume] for volumes, [timestamp, open, high, low, close] for ohlc
-    ohlc = data.get("prices", [])
-    if "ohlc" in data:
-        ohlc = data["ohlc"]
-    else:
-        # Approximate OHLC from prices if not available
-        ohlc = [[x[0], x[1], x[1], x[1], x[1]] for x in data["prices"]]
-    volume = {x[0]: x[1] for x in data.get("total_volumes", [])}
+    # CoinGecko returns [timestamp, price] for prices, [timestamp, volume] for volumes
+    prices = data.get("prices", [])
+    volumes = {x[0]: x[1] for x in data.get("total_volumes", [])}
+    # Approximate OHLC from prices (CoinGecko free API doesn't provide true OHLC)
+    ohlc = []
+    for i, (ts, price) in enumerate(prices):
+        ohlc.append([ts, price, price, price, price])  # open, high, low, close all = price
     df = pd.DataFrame(ohlc, columns=["timestamp", "open", "high", "low", "close"])
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
     df.set_index("timestamp", inplace=True)
-    df["volume"] = df.index.map(lambda x: volume.get(int(x.timestamp() * 1000), None))
+    df["volume"] = df.index.map(lambda x: volumes.get(int(x.timestamp() * 1000), None))
     return df
 
 ohlcv = fetch_ohlcv_coingecko(coin_id, days)
@@ -59,8 +61,7 @@ if ohlcv is None or ohlcv.empty:
     st.error("Failed to fetch data from CoinGecko.")
     st.stop()
 
-# --- Technical indicators (using pandas_ta if you want) ---
-import pandas_ta as ta
+# --- Technical indicators ---
 ohlcv['MA20'] = ohlcv['close'].rolling(window=20).mean()
 ohlcv['MA50'] = ohlcv['close'].rolling(window=50).mean()
 ohlcv['RSI'] = ta.rsi(ohlcv['close'], length=14)
