@@ -3,14 +3,21 @@ import requests
 import pandas as pd
 import matplotlib.pyplot as plt
 from groq import Groq
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env if present
+load_dotenv()
+
+ODDS_API_KEY = os.getenv("ODDS_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 st.set_page_config(page_title="AI Sports Betting Agent", page_icon="⚽")
 st.title("AI Sports Betting Agent")
 
-# groq_api_key = st.text_input("Enter your Groq API Key", type="password")
-# odds_api_key = st.text_input("Enter your The Odds API Key", type="password")
-groq_api_key = "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"
-odds_api_key = "dc7a3805b6241b1b9d3b9827fceafcfa"
+if not ODDS_API_KEY or not GROQ_API_KEY:
+    st.error("API keys not found in environment variables. Please set ODDS_API_KEY and GROQ_API_KEY in your .env file or environment.")
+    st.stop()
 
 # --- Fetch available sports ---
 @st.cache_data
@@ -21,15 +28,11 @@ def get_sports(api_key):
         return []
     return r.json()
 
-if odds_api_key:
-    sports = get_sports(odds_api_key)
-    sport_names = [s['title'] for s in sports]
-    sport_keys = {s['title']: s['key'] for s in sports}
-    selected_sport = st.selectbox("Select a sport:", sport_names)
-    selected_sport_key = sport_keys[selected_sport]
-else:
-    st.warning("Enter your The Odds API key to load sports.")
-    st.stop()
+sports = get_sports(ODDS_API_KEY)
+sport_names = [s['title'] for s in sports]
+sport_keys = {s['title']: s['key'] for s in sports}
+selected_sport = st.selectbox("Select a sport:", sport_names)
+selected_sport_key = sport_keys[selected_sport]
 
 # --- Fetch upcoming events ---
 @st.cache_data
@@ -40,7 +43,7 @@ def get_odds(api_key, sport_key):
         return []
     return r.json()
 
-events = get_odds(odds_api_key, selected_sport_key)
+events = get_odds(ODDS_API_KEY, selected_sport_key)
 if not events:
     st.warning("No events found or API limit reached.")
     st.stop()
@@ -78,8 +81,8 @@ for bookmaker in selected_event.get('bookmakers', []):
                 match_summary += f"\n  {outcome['name']}: {outcome['price']}"
 
 # --- AI Analysis ---
-if groq_api_key and st.button("Generate AI Betting Analysis"):
-    client = Groq(api_key=groq_api_key)
+if st.button("Generate AI Betting Analysis"):
+    client = Groq(api_key=GROQ_API_KEY)
     system_prompt = """
 You are an expert sports betting analyst. Using the provided odds and match data, analyze the match, discuss potential value bets, risk factors, and provide actionable betting recommendations. Consider recent form, head-to-head, and market odds. Format your answer as a structured betting analysis.
 """
