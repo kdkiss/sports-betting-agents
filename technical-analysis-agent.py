@@ -11,8 +11,9 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Suppress pandas_ta syntax warning
+# Suppress pandas_ta syntax warning and candlestick pattern warnings
 warnings.filterwarnings("ignore", category=SyntaxWarning)
+warnings.filterwarnings("ignore", message="There is no candle pattern named")
 
 st.set_page_config(page_title="Crypto Technical and On-Chain Analysis", page_icon="📊")
 st.title("Crypto Technical and On-Chain Analysis")
@@ -112,14 +113,14 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
             near_fib = abs(df['close'].iloc[-1] - fib_618) / df['close'].iloc[-1] < 0.02  # Relaxed to 2%
             fib_score = 0.5 if near_fib else 0
             
-            # Candlestick patterns
+            # Candlestick patterns with correct pandas_ta names
             candle_patterns = ta.cdl_pattern(df['open'], df['high'], df['low'], df['close'], 
-                                           name=['CDLDOJI', 'CDLENGULFING', 'CDLHAMMER', 'CDLINVERTEDHAMMER'])
+                                           name=['doji', 'engulfing', 'hammer', 'invertedhammer'])
             logger.info(f"Candlestick patterns result for {tf}: {candle_patterns if candle_patterns is not None else 'None'}")
             if candle_patterns is not None:
                 logger.info(f"Candlestick patterns columns for {tf}: {candle_patterns.columns.tolist()}")
-                bullish_pattern = any(candle_patterns[c].iloc[-1] > 0 for c in ['CDLHAMMER', 'CDLENGULFING'])
-                bearish_pattern = any(candle_patterns[c].iloc[-1] < 0 for c in ['CDLENGULFING'])
+                bullish_pattern = any(candle_patterns[c].iloc[-1] > 0 for c in ['hammer', 'engulfing'])
+                bearish_pattern = any(candle_patterns[c].iloc[-1] < 0 for c in ['engulfing'])
             else:
                 logger.info(f"No candlestick patterns detected for {tf}")
                 bullish_pattern = False
@@ -146,7 +147,7 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
                 "Fib 61.8%": f"{fib_618:.4f}" + (" (near)" if near_fib else "")
             }
             
-            # Store risk management data separately (to be added later if needed)
+            # Store risk management data separately
             risk_management = {
                 "Stop Loss (Long)": f"{stop_loss_long:.4f}",
                 "Take Profit (Long)": f"{take_profit_long:.4f}",
@@ -197,7 +198,7 @@ if st.button("Scan for High-Probability Setups"):
         if score > 1.5:
             st.success(f"High-probability LONG setup (Score: {score:.2f})")
         elif score < -1.5:
-            st.success(f"High-probability SHORT setup (Score: {score:.2f})")
+            st.success(f"High-propability SHORT setup (Score: {score:.2f})")
         else:
             st.info(f"No strong setup detected (Score: {score:.2f})")
 
