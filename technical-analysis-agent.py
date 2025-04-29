@@ -66,6 +66,7 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
         try:
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
             logger.info(f"Raw OHLCV data for {tf} (first 5 rows): {ohlcv[:5]}")
+            logger.info(f"Number of candles fetched for {tf}: {len(ohlcv)}")
             if not ohlcv or len(ohlcv) < 50:  # Need at least 50 candles for indicators
                 raise ValueError(f"Insufficient data for timeframe {tf}: {len(ohlcv)} candles")
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -113,9 +114,15 @@ def scan_timeframes_for_confluence(symbol, scan_timeframes, limit=90):
             # Candlestick patterns with correct identifiers
             candle_patterns = ta.cdl_pattern(df['open'], df['high'], df['low'], df['close'], 
                                            name=['CDLDOJI', 'CDLENGULFING', 'CDLHAMMER', 'CDLINVERTEDHAMMER'])
-            logger.info(f"Candlestick patterns for {tf}: {candle_patterns.columns.tolist()}")
-            bullish_pattern = any(candle_patterns[c].iloc[-1] > 0 for c in ['CDLHAMMER', 'CDLENGULFING'])
-            bearish_pattern = any(candle_patterns[c].iloc[-1] < 0 for c in ['CDLENGULFING'])
+            logger.info(f"Candlestick patterns result for {tf}: {candle_patterns if candle_patterns is not None else 'None'}")
+            if candle_patterns is not None:
+                logger.info(f"Candlestick patterns columns for {tf}: {candle_patterns.columns.tolist()}")
+                bullish_pattern = any(candle_patterns[c].iloc[-1] > 0 for c in ['CDLHAMMER', 'CDLENGULFING'])
+                bearish_pattern = any(candle_patterns[c].iloc[-1] < 0 for c in ['CDLENGULFING'])
+            else:
+                logger.info(f"No candlestick patterns detected for {tf}")
+                bullish_pattern = False
+                bearish_pattern = False
             pattern_score = 0.5 if bullish_pattern else (-0.5 if bearish_pattern else 0)
             
             # Risk management
