@@ -326,7 +326,7 @@ Format your answer as a structured technical analysis summary.
 Please provide a detailed technical analysis and actionable recommendations."""
         with st.spinner("Analyzing with AI..."):
             response = client.chat.completions.create(
-                model="llama3-70b-8192",
+                model="mistral-saba-24b",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
