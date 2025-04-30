@@ -331,7 +331,7 @@ Please provide a detailed technical analysis and actionable recommendations."""
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_tokens=1000,
+                max_tokens=2000,
                 temperature=0.2
             )
             analysis = response.choices[0].message.content
