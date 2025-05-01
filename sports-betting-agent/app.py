@@ -31,7 +31,7 @@ def muchacho():
     st.write(f"Using user ID: **{st.session_state.user_id}**")
 
     # Sport selection
-    sport = st.selectbox("Select sport:", ["NBA", "Football", "Tennis"], index=0)
+    sport = st.selectbox("Select sport:", ["NBA", "Football"], index=0)
     sport_lower = sport.lower()
 
     # Query input
