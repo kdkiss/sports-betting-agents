@@ -1,18 +1,12 @@
-import sys
 import asyncio
-
-# if sys.platform.startswith('win'):
-#     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-
-from crawl4ai import AsyncWebCrawler
+import httpx
+from bs4 import BeautifulSoup
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_groq import ChatGroq
 from langchain_core.tools import tool
 from langchain_core.prompts import ChatPromptTemplate
 from typing import Dict, Any, List
 import re
-import asyncio
 from datetime import datetime, timedelta
 from langchain.callbacks.base import BaseCallbackHandler
 import sqlite3
@@ -21,7 +15,6 @@ import logging
 from dotenv import load_dotenv
 import os
 import groq
-import httpx
 
 # Load environment variables from .env file
 load_dotenv()
@@ -53,7 +46,7 @@ def init_sqlite_db():
 # Run init at startup
 init_sqlite_db()
 
-# NBA team dictionaries
+# NBA team dictionaries (same as original)
 TEAM_CODES = {
     "hawks": "atl", "atlanta": "atl",
     "celtics": "bos", "boston": "bos",
@@ -153,8 +146,7 @@ SCORES24_NBA_NAMES = {
     "wizards": "washington-wizards", "washington": "washington-wizards"
 }
 
-# Football team dictionaries
-# Football team dictionaries
+# Football team dictionaries (same as original)
 SCORES24_FOOTBALL_NAMES = {
     # Germany
     "bayern": "bayern-munich", "bayern munich": "bayern-munich", "bayern münchen": "bayern-munich",
@@ -423,12 +415,41 @@ FOOTBALL_REF_CODES = {
     "como": "COM",
 }
 
-# In bobby_bets_agent.py, update the fetch_team_schedule tool
+# HTTP client for fetching web pages
+async def fetch_page(url: str) -> str:
+    """Fetch a webpage using httpx and return its HTML content."""
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+            response = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            response.raise_for_status()
+            return response.text
+    except Exception as e:
+        logger.error(f"Error fetching {url}: {str(e)}")
+        return f"Error fetching {url}: {str(e)}"
+
+# Parse HTML content
+def parse_html(html: str, keywords: List[str] = None) -> str:
+    """Parse HTML content with BeautifulSoup and extract relevant data."""
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        # Remove scripts and styles for cleaner text
+        for script in soup(["script", "style"]):
+            script.decompose()
+        text = soup.get_text(separator="\n", strip=True)
+        if keywords:
+            lines = text.split("\n")
+            relevant_lines = [line for line in lines if any(keyword.lower() in line.lower() for keyword in keywords)]
+            return "\n".join(relevant_lines) if relevant_lines else "No relevant data found."
+        return text
+    except Exception as e:
+        logger.error(f"Error parsing HTML: {str(e)}")
+        return f"Error parsing HTML: {str(e)}"
+
+# Updated fetch_team_schedule tool
 @tool
 async def fetch_team_schedule(teams_and_params: str, sport: str = "nba") -> str:
-    """Fetch the game schedule for specified teams and date using AsyncWebCrawler."""
+    """Fetch the game schedule for specified teams and date using httpx."""
     try:
-        # Parse teams and date from input
         parts = teams_and_params.lower().split()
         date = None
         teams = []
@@ -443,29 +464,24 @@ async def fetch_team_schedule(teams_and_params: str, sport: str = "nba") -> str:
         if len(teams) < 1:
             return f"Error: At least one {sport} team must be specified."
         
-        # Construct URL based on sport
+        team_dict = TEAM_CODES if sport == "nba" else FOOTBALL_CODES
+        team_code = team_dict[teams[0]]
         if sport == "nba":
-            team_code = TEAM_CODES[teams[0]]
             url = f"https://www.espn.com/nba/team/schedule/_/name/{team_code}"
             fallback_url = f"https://www.nba.com/schedule?team={team_code}"
-        else:  # football
-            team_code = FOOTBALL_CODES[teams[0]]
+        else:
             url = f"https://www.espn.com/soccer/team/fixtures/_/id/{team_code}"
             fallback_url = f"https://www.flashscore.com/team/{team_code}/2025"
         logger.info(f"Fetching {sport} schedule for {teams[0]} from {url}")
         
         # Try primary URL
-        async with AsyncWebCrawler() as crawler:
-            try:
-                # Remove config or use updated parameters
-                result = await crawler.arun(url=url)  # Remove config if not needed
-                schedule_data = result.markdown if result.success else f"Error crawling {url}: {result.error_message}"
-            except Exception as e:
-                logger.warning(f"Primary URL failed for {url}: {str(e)}. Trying fallback {fallback_url}")
-                result = await crawler.arun(url=fallback_url)
-                schedule_data = result.markdown if result.success else f"Error crawling {fallback_url}: {result.error_message}"
+        html = await fetch_page(url)
+        if "Error fetching" in html:
+            logger.warning(f"Primary URL failed for {url}. Trying fallback {fallback_url}")
+            html = await fetch_page(fallback_url)
         
-        # Parse the schedule to find relevant games
+        # Parse schedule
+        schedule_data = parse_html(html, keywords=["date", "vs", "at"] if sport == "nba" else ["date", "vs", "at", "fixture"])
         games = []
         lines = schedule_data.split("\n")
         for line in lines:
@@ -475,7 +491,6 @@ async def fetch_team_schedule(teams_and_params: str, sport: str = "nba") -> str:
                 games.append(line)
         
         if not games:
-            # Find the closest game if no game is found on the specified date
             if date:
                 try:
                     input_date = datetime.strptime(date, "%Y-%m-%d")
@@ -520,49 +535,37 @@ def extract_team_names(text: str, sport: str = "nba") -> Dict[str, str]:
 
 @tool
 async def fetch_team_stats(team_name: str, sport: str = "nba") -> str:
-    """Fetch team statistics and injury reports using AsyncWebCrawler."""
+    """Fetch team statistics and injury reports using httpx."""
     try:
-        if sport == "nba" and team_name not in BBALL_REF_CODES:
-            return f"Error: Invalid NBA team name {team_name}"
-        elif sport == "football" and team_name not in FOOTBALL_REF_CODES:
-            return f"Error: Invalid football team name {team_name}"
+        team_dict = BBALL_REF_CODES if sport == "nba" else FOOTBALL_REF_CODES
+        if team_name not in team_dict:
+            return f"Error: Invalid {sport} team name {team_name}"
         
+        team_code = team_dict[team_name]
         if sport == "nba":
-            team_code = BBALL_REF_CODES[team_name]
             url = f"https://www.basketball-reference.com/teams/{team_code}/2025.html"
             fallback_url = f"https://www.nba.com/stats/team/{team_code}"
-        else:  # football
-            team_code = FOOTBALL_REF_CODES[team_name]
+        else:
             url = f"https://www.soccerway.com/teams/{team_code}/2025"
             fallback_url = f"https://www.flashscore.com/team/{team_code}/2025"
         logger.info(f"Fetching {sport} stats for {team_name} from {url}")
         
-        # Try primary URL
-        async with AsyncWebCrawler() as crawler:
-            try:
-                result = await crawler.arun(url=url)  # Remove config
-                stats_data = result.markdown if result.success else f"Error crawling {url}: {result.error_message}"
-            except Exception as e:
-                logger.warning(f"Primary URL failed for {url}: {str(e)}. Trying fallback {fallback_url}")
-                result = await crawler.arun(url=fallback_url)  # Remove config
-                stats_data = result.markdown if result.success else f"Error crawling {fallback_url}: {result.error_message}"
+        html = await fetch_page(url)
+        if "Error fetching" in html:
+            logger.warning(f"Primary URL failed for {url}. Trying fallback {fallback_url}")
+            html = await fetch_page(fallback_url)
         
-        # Extract relevant stats (simplified parsing)
-        stats = []
-        lines = stats_data.split("\n")
         keywords = ["points", "rebounds", "assists", "fg%", "injury"] if sport == "nba" else ["goals", "assists", "possession", "shots", "injury"]
-        for line in lines:
-            if any(keyword in line.lower() for keyword in keywords):
-                stats.append(line)
+        stats_data = parse_html(html, keywords=keywords)
         
-        return f"{sport.capitalize()} stats for {team_name}:\n{''.join(stats)}\nURL: {url}"
+        return f"{sport.capitalize()} stats for {team_name}:\n{stats_data}\nURL: {url}"
     except Exception as e:
         logger.error(f"Error fetching {sport} stats for {team_name}: {str(e)}")
         return f"Error fetching {sport} stats for {team_name}: {str(e)}"
 
 @tool
 async def fetch_betting_trends(team1: str, team2: str, date: str, sport: str = "nba") -> str:
-    """Fetch betting trends for a specific matchup using AsyncWebCrawler."""
+    """Fetch betting trends for a specific matchup using httpx."""
     try:
         team_dict = SCORES24_NBA_NAMES if sport == "nba" else SCORES24_FOOTBALL_NAMES
         if team1 not in team_dict or team2 not in team_dict:
@@ -575,24 +578,14 @@ async def fetch_betting_trends(team1: str, team2: str, date: str, sport: str = "
         fallback_url = f"https://www.oddsportal.com/{sport_path}/{team1_code}-vs-{team2_code}"
         logger.info(f"Fetching {sport} betting trends for {team1} vs {team2} from {url}")
         
-        # Try primary URL
-        async with AsyncWebCrawler() as crawler:
-            try:
-                result = await crawler.arun(url=url)  # Remove config
-                trends_data = result.markdown if result.success else f"Error crawling {url}: {result.error_message}"
-            except Exception as e:
-                logger.warning(f"Primary URL failed for {url}: {str(e)}. Trying fallback {fallback_url}")
-                result = await crawler.arun(url=fallback_url)  # Remove config
-                trends_data = result.markdown if result.success else f"Error crawling {fallback_url}: {result.error_message}"
+        html = await fetch_page(url)
+        if "Error fetching" in html:
+            logger.warning(f"Primary URL failed for {url}. Trying fallback {fallback_url}")
+            html = await fetch_page(fallback_url)
         
-        # Extract trends (simplified)
-        trends = []
-        lines = trends_data.split("\n")
-        for line in lines:
-            if any(keyword in line.lower() for keyword in ["odds", "spread", "over/under", "moneyline"]):
-                trends.append(line)
+        trends_data = parse_html(html, keywords=["odds", "spread", "over/under", "moneyline"])
         
-        return f"{sport.capitalize()} betting trends for {team1} vs {team2} on {date}:\n{''.join(trends)}\nSource: {url}"
+        return f"{sport.capitalize()} betting trends for {team1} vs {team2} on {date}:\n{trends_data}\nSource: {url}"
     except Exception as e:
         logger.error(f"Error fetching {sport} betting trends: {str(e)}")
         return f"Error fetching {sport} betting trends: {str(e)}"
@@ -644,6 +637,10 @@ def manage_memory(action: str, user_id: str = None, memory: str = None, metadata
             cursor.execute("SELECT COUNT(*) FROM memories WHERE user_id = ?", (user_id,))
             count = cursor.fetchone()[0]
             return f"Total memories for user {user_id}: {count}"
+        elif action == "clear" and user_id:
+            cursor.execute("DELETE FROM memories WHERE user_id = ?", (user_id,))
+            conn.commit()
+            return f"Memories cleared for user {user_id}"
         return "Invalid memory action"
     except Exception as e:
         logger.error(f"Error managing memory: {str(e)}")
@@ -651,7 +648,7 @@ def manage_memory(action: str, user_id: str = None, memory: str = None, metadata
     finally:
         conn.close()
 
-# System prompt for the agent
+# System prompt for the agent (same as original)
 system_prompt = """You are Bobby Bets, an expert sports analyst and seasoned bettor with decades of experience in both NBA basketball and European football (soccer). You provide data-driven insights and betting recommendations for NBA and football matches in an authentic, conversational style that sounds like a real sports bettor.
 
 When analyzing matchups, follow these steps:
@@ -760,7 +757,6 @@ class DateAdjustmentHandler(BaseCallbackHandler):
                         self.original_date = original_match.group(1)
 
 # Create the agent with tools
-# Custom Groq clients to avoid proxies issue
 sync_groq_client = groq.Groq(
     api_key=GROQ_API_KEY,
     http_client=httpx.Client(follow_redirects=True)
@@ -773,7 +769,7 @@ llm = ChatGroq(
     model_name="llama3-70b-8192",
     api_key=GROQ_API_KEY,
     temperature=0.7,
-    max_tokens=2000,
+    max_tokens=4096,
     client=sync_groq_client,
     async_client=async_groq_client
 )
@@ -807,7 +803,6 @@ async def ask_bobby(question: str, user_id: str = "default_user", sport: str = "
         for row in cursor.fetchall():
             mem_text = row[0]
             mem_metadata = json.loads(row[1])
-            # Simple relevance check based on team names
             if any(team in question.lower() for team in team_dict.keys() if team in mem_text.lower()):
                 relevant_memories.append(mem_text)
         conn.close()
@@ -947,7 +942,6 @@ IMPORTANT: Back up your predictions with specific data points and evidence. For 
 Use an authentic sports bettor voice - conversational, with some slang and personality. Don't use a rigid template - make it sound natural and vary your language.
 """
         try:
-            # Direct AsyncGroq call to bypass LangChain issue
             async_groq = groq.AsyncGroq(api_key=GROQ_API_KEY, http_client=httpx.AsyncClient(follow_redirects=True))
             response = await async_groq.chat.completions.create(
                 model="llama3-70b-8192",
@@ -1010,4 +1004,3 @@ Note: Error formatting response in sports bettor style: {str(e)}.
         except Exception as fallback_error:
             logger.error(f"Error in fallback agent execution: {str(fallback_error)}")
             return {"output": f"Error analyzing your {sport} question: {str(fallback_error)}"}
-
