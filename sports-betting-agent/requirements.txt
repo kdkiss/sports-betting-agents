@@ -1,0 +1,9 @@
+streamlit
+crawl4ai
+langchain==0.3.24
+langchain-community==0.3.23
+langchain-groq==0.3.0
+groq==0.11.0
+httpx==0.28.1
+python-dotenv
+playwright
