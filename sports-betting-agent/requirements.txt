@@ -7,4 +7,3 @@ groq==0.11.0
 httpx>=0.27.0
 beautifulsoup4>=4.12.3
 python-dotenv
-playwright
