@@ -6,19 +6,15 @@ from groq import Groq
 import os
 from dotenv import load_dotenv
 
+
 # Load environment variables from .env if present
 load_dotenv()
 
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# Configure Streamlit to minimize file watching
-st.set_page_config(page_title="AI Sports Betting Agent with Arbitrage", page_icon="⚽", layout="wide")
-st.title("AI Sports Betting Agent with Arbitrage Calculator")
-
-# Disable aggressive file watching to reduce inotify usage
-if "STREAMLIT_SERVER_WATCHDOG_POLLING" not in os.environ:
-    os.environ["STREAMLIT_SERVER_WATCHDOG_POLLING"] = "true"
+st.set_page_config(page_title="AI Sports Betting Agent", page_icon="⚽")
+st.title("AI Sports Betting Agent")
 
 if not ODDS_API_KEY or not GROQ_API_KEY:
     st.error("API keys not found in environment variables. Please set ODDS_API_KEY and GROQ_API_KEY in your .env file or environment.")
@@ -57,7 +53,7 @@ markets_param = ",".join(selected_market_keys)
 # --- Fetch upcoming events with selected markets ---
 @st.cache_data
 def get_odds(api_key, sport_key, markets):
-    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={api_key}®ions=eu&markets={markets}"
+    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={api_key}&regions=eu&markets={markets}"
     r = requests.get(url)
     if r.status_code != 200:
         return []
@@ -88,122 +84,6 @@ for bookmaker in selected_event.get('bookmakers', []):
 odds_df = pd.DataFrame(odds_data)
 st.table(odds_df)
 
-# --- Arbitrage Calculator ---
-def arbitraj_hesapla(butce, oran_a, oran_b, language, team_a, team_b, bookmaker_a, bookmaker_b):
-    # Arbitraj oranı hesaplama
-    arbitraj_orani = (1 / oran_a) + (1 / oran_b)
-    
-    # If no arbitrage opportunity
-    if arbitraj_orani >= 1:
-        if language == 'English':
-            st.warning("No arbitrage opportunity. Guaranteed profit cannot be achieved with these odds.")
-        else:
-            st.warning("Arbitraj fırsatı yok. Bu oranlarla garanti kazanç sağlanamaz.")
-        return None
-
-    # A team bet
-    bahis_a = (butce / oran_a) / arbitraj_orani
-    # B team bet
-    bahis_b = (butce / oran_b) / arbitraj_orani
-    # Calculate profit in both cases
-    kazanc_a = bahis_a * oran_a
-    kar_a = kazanc_a - butce  # Profit if A team wins
-    kazanc_b = bahis_b * oran_b
-    kar_b = kazanc_b - butce  # Profit if B team wins
-
-    # Prepare results
-    total_payout = max(kazanc_a, kazanc_b)
-    total_profit = min(kar_a, kar_b)
-    roi = (total_profit / butce) * 100
-
-    result = {
-        'bahis_a': bahis_a,
-        'bahis_b': bahis_b,
-        'total_payout': total_payout,
-        'total_profit': total_profit,
-        'roi': roi,
-        'team_a': team_a,
-        'team_b': team_b,
-        'bookmaker_a': bookmaker_a,
-        'bookmaker_b': bookmaker_b,
-        'oran_a': oran_a,
-        'oran_b': oran_b
-    }
-    return result
-
-# --- Arbitrage Section ---
-st.write("### Arbitrage Opportunities")
-language = st.radio("Select Language", ('English', 'Türkçe'))
-
-# Input for total budget
-butce = st.number_input(
-    "Enter total budget to bet" if language == 'English' else "Yatırılacak toplam bütçeyi girin",
-    min_value=1.0, step=1.0, value=200.0, format="%.2f"
-)
-
-if 'h2h' not in selected_market_keys:
-    st.warning("Please select the 'Moneyline (h2h)' market to calculate arbitrage opportunities.")
-else:
-    # Find best odds for each outcome in h2h market
-    h2h_odds = odds_df[odds_df['Market'] == 'h2h']
-    if h2h_odds.empty:
-        st.warning("No odds available for the Moneyline (h2h) market.")
-    else:
-        outcomes = h2h_odds.groupby('Outcome')
-        best_odds = {}
-        for outcome_name, outcome_data in outcomes:
-            best_odd = outcome_data['Odds'].max()
-            best_bookmaker = outcome_data[outcome_data['Odds'] == best_odd]['Bookmaker'].iloc[0]
-            best_odds[outcome_name] = {'odds': best_odd, 'bookmaker': best_bookmaker}
-
-        if len(best_odds) == 2:  # Ensure exactly two outcomes (e.g., Team A and Team B)
-            team_a = selected_event['home_team']
-            team_b = selected_event['away_team']
-            oran_a = best_odds.get(team_a, {}).get('odds')
-            oran_b = best_odds.get(team_b, {}).get('odds')
-            bookmaker_a = best_odds.get(team_a, {}).get('bookmaker')
-            bookmaker_b = best_odds.get(team_b, {}).get('bookmaker')
-
-            if oran_a and oran_b:
-                if st.button("Calculate Arbitrage" if language == 'English' else "Arbitraj Hesapla"):
-                    result = arbitraj_hesapla(butce, oran_a, oran_b, language, team_a, team_b, bookmaker_a, bookmaker_b)
-                    if result:
-                        st.subheader("Results" if language == 'English' else "Sonuçlar")
-                        st.write(
-                            f"**Bet on {team_a} at {bookmaker_a}**: {result['bahis_a']:.2f} {'usd' if language == 'English' else 'TL'}"
-                            if language == 'English'
-                            else f"**{team_a}'ya {bookmaker_a}'da Bahis**: {result['bahis_a']:.2f} TL"
-                        )
-                        st.write(
-                            f"**Bet on {team_b} at {bookmaker_b}**: {result['bahis_b']:.2f} {'usd' if language == 'English' else 'TL'}"
-                            if language == 'English'
-                            else f"**{team_b}'ye {bookmaker_b}'da Bahis**: {result['bahis_b']:.2f} TL"
-                        )
-                        st.write(
-                            f"**Total profit**: {result['total_profit']:.2f} {'usd' if language == 'English' else 'TL'}"
-                            if language == 'English'
-                            else f"**Her iki durumda da kazanılacak garanti kar**: {result['total_profit']:.2f} TL"
-                        )
-
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric(
-                                "Total Payout" if language == 'English' else "Toplam Ödeme",
-                                value=f"{'$' if language == 'English' else '₺'}{result['total_payout']:.2f}"
-                            )
-                        with col2:
-                            st.metric(
-                                "Total Profit" if language == 'English' else "Toplam Kar",
-                                value=f"{'$' if language == 'English' else '₺'}{result['total_profit']:.2f}"
-                            )
-                        with col3:
-                            st.metric(
-                                "ROI" if language == 'English' else "ROI",
-                                value=f"{result['roi']:.2f}%"
-                            )
-            else:
-                st.warning("Insufficient odds data for both teams to calculate arbitrage.")
-
 # --- Prepare data summary for AI ---
 match_summary = f"""
 Match: {selected_event['home_team']} vs {selected_event['away_team']}
@@ -232,6 +112,7 @@ You are a highly experienced sports betting analyst. Using the provided odds and
 - **Value Bets & Recommendations:** Clearly identify any value bets across all markets, explain your reasoning, and provide actionable betting recommendations for each.  
 
 Ensure your analysis is logical, data-driven, and easy to follow. Present your findings in a well-structured format with clear headings for each section.
+
 """
     user_prompt = f"""Here is the latest data for the match:
 {match_summary}
