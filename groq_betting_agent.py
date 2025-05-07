@@ -6,6 +6,7 @@ from groq import Groq
 import os
 from dotenv import load_dotenv
 
+
 # Load environment variables from .env if present
 load_dotenv()
 
@@ -98,7 +99,6 @@ for bookmaker in selected_event.get('bookmakers', []):
                 match_summary += f"\n    {outcome['name']}: {outcome['price']}"
 
 # --- AI Analysis ---
-analysis = None  # To store the initial AI analysis
 if st.button("Generate AI Betting Analysis"):
     client = Groq(api_key=GROQ_API_KEY)
     system_prompt = """
@@ -112,6 +112,7 @@ You are a highly experienced sports betting analyst. Using the provided odds and
 - **Value Bets & Recommendations:** Clearly identify any value bets across all markets, explain your reasoning, and provide actionable betting recommendations for each.  
 
 Ensure your analysis is logical, data-driven, and easy to follow. Present your findings in a well-structured format with clear headings for each section.
+
 """
     user_prompt = f"""Here is the latest data for the match:
 {match_summary}
@@ -127,7 +128,7 @@ Please provide a detailed betting analysis and recommendations."""
             temperature=0.2
         )
         analysis = response.choices[0].message.content
-        st.session_state['analysis'] = analysis  # Store analysis in session state
+        st.session_state['analysis'] = analysis  # Store analysis for follow-up questions
         st.write("### AI Betting Analysis")
         st.write(analysis)
 
@@ -135,7 +136,7 @@ Please provide a detailed betting analysis and recommendations."""
 st.write("### Ask a Follow-Up Question")
 follow_up_question = st.text_input("Enter your follow-up question about the analysis or match:")
 if st.button("Submit Follow-Up Question") and follow_up_question:
-    if 'analysis' not in st.session_state or not st.session_state['analysis']:
+    if 'analysis' not in st.session_state:
         st.warning("Please generate the AI betting analysis first.")
     else:
         client = Groq(api_key=GROQ_API_KEY)
@@ -161,7 +162,7 @@ Please provide a detailed and relevant response to the user's question.
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_tokens=1000,
+                max_tokens=1000three
                 temperature=0.2
             )
             follow_up_answer = response.choices[0].message.content
