@@ -12,8 +12,13 @@ load_dotenv()
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-st.set_page_config(page_title="AI Sports Betting Agent with Arbitrage", page_icon="⚽")
+# Configure Streamlit to minimize file watching
+st.set_page_config(page_title="AI Sports Betting Agent with Arbitrage", page_icon="⚽", layout="wide")
 st.title("AI Sports Betting Agent with Arbitrage Calculator")
+
+# Disable aggressive file watching to reduce inotify usage
+if "STREAMLIT_SERVER_WATCHDOG_POLLING" not in os.environ:
+    os.environ["STREAMLIT_SERVER_WATCHDOG_POLLING"] = "true"
 
 if not ODDS_API_KEY or not GROQ_API_KEY:
     st.error("API keys not found in environment variables. Please set ODDS_API_KEY and GROQ_API_KEY in your .env file or environment.")
