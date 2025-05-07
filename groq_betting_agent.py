@@ -162,7 +162,7 @@ Please provide a detailed and relevant response to the user's question.
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_tokens=1000three
+                max_tokens=1000
                 temperature=0.2
             )
             follow_up_answer = response.choices[0].message.content
