@@ -53,7 +53,7 @@ markets_param = ",".join(selected_market_keys)
 # --- Fetch upcoming events with selected markets ---
 @st.cache_data
 def get_odds(api_key, sport_key, markets):
-    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={api_key}®ions=eu&markets={markets}"
+    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={api_key}&regions=eu&markets={markets}"
     r = requests.get(url)
     if r.status_code != 200:
         return []
@@ -128,43 +128,5 @@ Please provide a detailed betting analysis and recommendations."""
             temperature=0.2
         )
         analysis = response.choices[0].message.content
-        st.session_state['analysis'] = analysis  # Store analysis for follow-up questions
         st.write("### AI Betting Analysis")
         st.write(analysis)
-
-# --- Follow-Up Questions ---
-st.write("### Ask a Follow-Up Question")
-follow_up_question = st.text_input("Enter your follow-up question about the analysis or match:")
-if st.button("Submit Follow-Up Question") and follow_up_question:
-    if 'analysis' not in st.session_state:
-        st.warning("Please generate the AI betting analysis first.")
-    else:
-        client = Groq(api_key=GROQ_API_KEY)
-        system_prompt = """
-You are a highly experienced sports betting analyst. The user has asked a follow-up question regarding a previous betting analysis or match data. Provide a clear, concise, and accurate response based on the provided match data and prior analysis. Ensure the response is data-driven and relevant to the user's question.
-"""
-        user_prompt = f"""
-Previous Match Data:
-{match_summary}
-
-Previous Analysis:
-{st.session_state['analysis']}
-
-User's Follow-Up Question:
-{follow_up_question}
-
-Please provide a detailed and relevant response to the user's question.
-"""
-        with st.spinner("Processing follow-up question..."):
-            response = client.chat.completions.create(
-                model="meta-llama/llama-4-maverick-17b-128e-instruct",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                max_tokens=1000three
-                temperature=0.2
-            )
-            follow_up_answer = response.choices[0].message.content
-            st.write("### Follow-Up Answer")
-            st.write(follow_up_answer)
