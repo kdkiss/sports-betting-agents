@@ -7,11 +7,6 @@ def arbitraj_hesapla(balance, risk_percentage, oran_a, oran_b):
     # Arbitraj oranı hesaplama
     arbitraj_orani = (1 / oran_a) + (1 / oran_b)
     
-    # If no arbitrage opportunity
-    if arbitraj_orani >= 1:
-        st.warning("No arbitrage opportunity. Guaranteed profit cannot be achieved with these odds.")
-        return
-
     # A team bet
     bahis_a = (butce / oran_a) / arbitraj_orani
     # B team bet
