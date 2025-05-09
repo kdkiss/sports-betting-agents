@@ -1,32 +1,48 @@
 import streamlit as st
 import pandas as pd
 import uuid
+import json
+import os
 
-# Initialize session state for bet history
-if 'bet_history' not in st.session_state:
-    st.session_state.bet_history = pd.DataFrame(columns=[
+# File to persist bet history
+HISTORY_FILE = "bet_history.json"
+
+# Load bet history from file
+def load_history():
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, 'r') as f:
+            data = json.load(f)
+            return pd.DataFrame(data['bet_history']), data['balance']
+    return pd.DataFrame(columns=[
         'Bet ID', 'Date', 'Team A Odds', 'Team B Odds', 'Team C Odds', 
         'Bet A', 'Bet B', 'Bet C', 'Total Profit', 'ROI', 'Balance After'
-    ])
-if 'balance' not in st.session_state:
-    st.session_state.balance = 100.0  # Starting balance
+    ]), 100.0
+
+# Save bet history to file
+def save_history():
+    data = {
+        'bet_history': st.session_state.bet_history.to_dict('records'),
+        'balance': st.session_state.balance
+    }
+    with open(HISTORY_FILE, 'w') as f:
+        json.dump(data, f)
+
+# Initialize session state
+if 'bet_history' not in st.session_state or 'balance' not in st.session_state:
+    st.session_state.bet_history, st.session_state.balance = load_history()
 
 def arbitraj_hesapla(balance, risk_percentage, oran_a, oran_b, oran_c=None):
-    # Calculate budget based on risk percentage
     butce = balance * (risk_percentage / 100)
     
-    # Arbitraj oranı hesaplama
     if oran_c and oran_c > 1.0:
         arbitraj_orani = (1 / oran_a) + (1 / oran_b) + (1 / oran_c)
     else:
         arbitraj_orani = (1 / oran_a) + (1 / oran_b)
     
-    # Calculate bets
     bahis_a = (butce / oran_a) / arbitraj_orani
     bahis_b = (butce / oran_b) / arbitraj_orani
     bahis_c = (butce / oran_c) / arbitraj_orani if oran_c and oran_c > 1.0 else 0
     
-    # Calculate profit in each case
     kazanc_a = bahis_a * oran_a
     kar_a = kazanc_a - butce
     kazanc_b = bahis_b * oran_b
@@ -40,13 +56,9 @@ def arbitraj_hesapla(balance, risk_percentage, oran_a, oran_b, oran_c=None):
         total_profit = min(kar_a, kar_b)
         total_payout = max(kazanc_a, kazanc_b)
 
-    # Calculate ROI
     roi = (total_profit / butce) * 100 if butce > 0 else 0
-
-    # Update balance
     st.session_state.balance += total_profit
 
-    # Log bet to history
     bet_id = str(uuid.uuid4())[:8]
     new_bet = pd.DataFrame([{
         'Bet ID': bet_id,
@@ -62,8 +74,8 @@ def arbitraj_hesapla(balance, risk_percentage, oran_a, oran_b, oran_c=None):
         'Balance After': st.session_state.balance
     }])
     st.session_state.bet_history = pd.concat([st.session_state.bet_history, new_bet], ignore_index=True)
+    save_history()
 
-    # Display results
     st.subheader("Results")
     st.write(f"**Bet on Team A**: ${bahis_a:.2f}")
     st.write(f"**Bet on Team B**: ${bahis_b:.2f}")
@@ -79,17 +91,13 @@ def arbitraj_hesapla(balance, risk_percentage, oran_a, oran_b, oran_c=None):
     with col3:
         st.metric("ROI", value=f"{roi:.2f}%")
 
-# Streamlit page setup
 st.set_page_config(page_title="Arbitrage Calculator", layout="wide")
-
-# Title and description
 st.title("Arbitrage Calculator")
 st.markdown("""
     This tool helps you calculate arbitrage opportunities and track bets.
     Enter odds, risk percentage, and view bet history below. Team C odds are optional.
 """)
 
-# Edit starting balance
 st.subheader("Set Starting Balance")
 with st.form(key="starting_balance_form"):
     starting_balance = st.number_input("Starting Balance", min_value=0.0, step=1.0, value=st.session_state.balance, format="%.2f")
@@ -99,13 +107,12 @@ with st.form(key="starting_balance_form"):
         st.session_state.bet_history = pd.DataFrame(columns=[
             'Bet ID', 'Date', 'Team A Odds', 'Team B Odds', 'Team C Odds', 
             'Bet A', 'Bet B', 'Bet C', 'Total Profit', 'ROI', 'Balance After'
-        ])  # Reset history on balance change
+        ])
+        save_history()
         st.success("Starting balance updated!")
 
-# Display current balance
 st.write(f"**Current Balance**: ${st.session_state.balance:.2f}")
 
-# Input fields for odds and risk percentage
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     oran_a = st.number_input("Enter odds for Team A", min_value=1.0, step=0.01, value=1.75, format="%.2f")
@@ -116,15 +123,12 @@ with col3:
 with col4:
     risk_percentage = st.number_input("Risk percentage of balance", min_value=0.0, max_value=100.0, step=0.1, value=20.0, format="%.1f")
 
-# Calculate button
 if st.button("Calculate", key="arbitraj_hesapla"):
     arbitraj_hesapla(st.session_state.balance, risk_percentage, oran_a, oran_b, oran_c)
 
-# Bet history display
 st.subheader("Bet History")
 st.dataframe(st.session_state.bet_history, use_container_width=True)
 
-# Edit bet history
 st.subheader("Edit Bet History")
 bet_id_to_edit = st.selectbox("Select Bet ID to Edit", st.session_state.bet_history['Bet ID'].tolist(), key="edit_bet_id")
 if bet_id_to_edit:
@@ -140,10 +144,8 @@ if bet_id_to_edit:
         new_profit = st.number_input("Total Profit", value=float(bet['Total Profit']), format="%.2f")
         submit_edit = st.form_submit_button("Update Bet")
         if submit_edit:
-            # Update balance by reversing old profit and applying new profit
             old_profit = bet['Total Profit']
             st.session_state.balance = st.session_state.balance - old_profit + new_profit
-            # Update bet history
             st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Date'] = new_date
             st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Team A Odds'] = new_oran_a
             st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Team B Odds'] = new_oran_b
@@ -154,4 +156,5 @@ if bet_id_to_edit:
             st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Total Profit'] = new_profit
             st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Balance After'] = st.session_state.balance
             st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'ROI'] = (new_profit / (new_bet_a + new_bet_b + (new_bet_c if new_oran_c > 1.0 else 0))) * 100 if (new_bet_a + new_bet_b + (new_bet_c if new_oran_c > 1.0 else 0)) > 0 else 0
+            save_history()
             st.success("Bet updated successfully!")
