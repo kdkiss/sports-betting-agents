@@ -4,13 +4,20 @@ import uuid
 import json
 import os
 
-# File to persist bet history
-HISTORY_FILE = "bet_history.json"
+# Directory to store user data
+DATA_DIR = "user_data"
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
 
-# Load bet history from file
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, 'r') as f:
+# File path for user data
+def get_user_file(username):
+    return os.path.join(DATA_DIR, f"{username}_history.json")
+
+# Load user bet history and balance
+def load_user_history(username):
+    user_file = get_user_file(username)
+    if os.path.exists(user_file):
+        with open(user_file, 'r') as f:
             data = json.load(f)
             return pd.DataFrame(data['bet_history']), data['balance']
     return pd.DataFrame(columns=[
@@ -18,18 +25,25 @@ def load_history():
         'Bet A', 'Bet B', 'Bet C', 'Total Profit', 'ROI', 'Balance After'
     ]), 100.0
 
-# Save bet history to file
-def save_history():
+# Save user bet history and balance
+def save_user_history(username):
+    user_file = get_user_file(username)
     data = {
         'bet_history': st.session_state.bet_history.to_dict('records'),
         'balance': st.session_state.balance
     }
-    with open(HISTORY_FILE, 'w') as f:
+    with open(user_file, 'w') as f:
         json.dump(data, f)
 
 # Initialize session state
+if 'username' not in st.session_state:
+    st.session_state.username = None
 if 'bet_history' not in st.session_state or 'balance' not in st.session_state:
-    st.session_state.bet_history, st.session_state.balance = load_history()
+    st.session_state.bet_history = pd.DataFrame(columns=[
+        'Bet ID', 'Date', 'Team A Odds', 'Team B Odds', 'Team C Odds', 
+        'Bet A', 'Bet B', 'Bet C', 'Total Profit', 'ROI', 'Balance After'
+    ])
+    st.session_state.balance = 100.0
 
 def arbitraj_hesapla(balance, risk_percentage, oran_a, oran_b, oran_c=None):
     butce = balance * (risk_percentage / 100)
@@ -74,7 +88,7 @@ def arbitraj_hesapla(balance, risk_percentage, oran_a, oran_b, oran_c=None):
         'Balance After': st.session_state.balance
     }])
     st.session_state.bet_history = pd.concat([st.session_state.bet_history, new_bet], ignore_index=True)
-    save_history()
+    save_user_history(st.session_state.username)
 
     st.subheader("Results")
     st.write(f"**Bet on Team A**: ${bahis_a:.2f}")
@@ -95,8 +109,23 @@ st.set_page_config(page_title="Arbitrage Calculator", layout="wide")
 st.title("Arbitrage Calculator")
 st.markdown("""
     This tool helps you calculate arbitrage opportunities and track bets.
-    Enter odds, risk percentage, and view bet history below. Team C odds are optional.
+    Enter your username, odds, risk percentage, and view bet history below. Team C odds are optional.
 """)
+
+# Username input
+st.subheader("User Login")
+with st.form(key="username_form"):
+    username = st.text_input("Enter Username (e.g., bakingloot)")
+    submit_username = st.form_submit_button("Login")
+    if submit_username and username:
+        st.session_state.username = username
+        st.session_state.bet_history, st.session_state.balance = load_user_history(username)
+        st.success(f"Logged in as {username}!")
+
+# Check if user is logged in
+if not st.session_state.username:
+    st.warning("Please enter a username to continue.")
+    st.stop()
 
 st.subheader("Set Starting Balance")
 with st.form(key="starting_balance_form"):
@@ -108,7 +137,7 @@ with st.form(key="starting_balance_form"):
             'Bet ID', 'Date', 'Team A Odds', 'Team B Odds', 'Team C Odds', 
             'Bet A', 'Bet B', 'Bet C', 'Total Profit', 'ROI', 'Balance After'
         ])
-        save_history()
+        save_user_history(st.session_state.username)
         st.success("Starting balance updated!")
 
 st.write(f"**Current Balance**: ${st.session_state.balance:.2f}")
@@ -156,5 +185,5 @@ if bet_id_to_edit:
             st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Total Profit'] = new_profit
             st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Balance After'] = st.session_state.balance
             st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'ROI'] = (new_profit / (new_bet_a + new_bet_b + (new_bet_c if new_oran_c > 1.0 else 0))) * 100 if (new_bet_a + new_bet_b + (new_bet_c if new_oran_c > 1.0 else 0)) > 0 else 0
-            save_history()
+            save_user_history(st.session_state.username)
             st.success("Bet updated successfully!")
