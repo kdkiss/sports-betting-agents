@@ -35,17 +35,8 @@ def save_user_history(username):
     with open(user_file, 'w') as f:
         json.dump(data, f)
 
-# Initialize session state
-if 'username' not in st.session_state:
-    st.session_state.username = None
-if 'bet_history' not in st.session_state or 'balance' not in st.session_state:
-    st.session_state.bet_history = pd.DataFrame(columns=[
-        'Bet ID', 'Date', 'Team A Odds', 'Team B Odds', 'Team C Odds', 
-        'Bet A', 'Bet B', 'Bet C', 'Total Profit', 'ROI', 'Balance After'
-    ])
-    st.session_state.balance = 100.0
-
-def arbitraj_hesapla(balance, risk_percentage, oran_a, oran_b, oran_c=None):
+# Arbitrage calculation function
+def arbitraj_hesapla(balance, risk_percentage, oran_a, oran_b, oran_c=None, track=False):
     butce = balance * (risk_percentage / 100)
     
     if oran_c and oran_c > 1.0:
@@ -71,24 +62,25 @@ def arbitraj_hesapla(balance, risk_percentage, oran_a, oran_b, oran_c=None):
         total_payout = max(kazanc_a, kazanc_b)
 
     roi = (total_profit / butce) * 100 if butce > 0 else 0
-    st.session_state.balance += total_profit
 
-    bet_id = str(uuid.uuid4())[:8]
-    new_bet = pd.DataFrame([{
-        'Bet ID': bet_id,
-        'Date': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'Team A Odds': oran_a,
-        'Team B Odds': oran_b,
-        'Team C Odds': oran_c if oran_c > 1.0 else None,
-        'Bet A': bahis_a,
-        'Bet B': bahis_b,
-        'Bet C': bahis_c if oran_c > 1.0 else None,
-        'Total Profit': total_profit,
-        'ROI': roi,
-        'Balance After': st.session_state.balance
-    }])
-    st.session_state.bet_history = pd.concat([st.session_state.bet_history, new_bet], ignore_index=True)
-    save_user_history(st.session_state.username)
+    if track:
+        st.session_state.balance += total_profit
+        bet_id = str(uuid.uuid4())[:8]
+        new_bet = pd.DataFrame([{
+            'Bet ID': bet_id,
+            'Date': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'Team A Odds': oran_a,
+            'Team B Odds': oran_b,
+            'Team C Odds': oran_c if oran_c > 1.0 else None,
+            'Bet A': bahis_a,
+            'Bet B': bahis_b,
+            'Bet C': bahis_c if oran_c > 1.0 else None,
+            'Total Profit': total_profit,
+            'ROI': roi,
+            'Balance After': st.session_state.balance
+        }])
+        st.session_state.bet_history = pd.concat([st.session_state.bet_history, new_bet], ignore_index=True)
+        save_user_history(st.session_state.username)
 
     st.subheader("Results")
     st.write(f"**Bet on Team A**: ${bahis_a:.2f}")
@@ -104,6 +96,16 @@ def arbitraj_hesapla(balance, risk_percentage, oran_a, oran_b, oran_c=None):
         st.metric("Total Profit", value=f"${total_profit:.2f}")
     with col3:
         st.metric("ROI", value=f"{roi:.2f}%")
+
+# Initialize session state
+if 'username' not in st.session_state:
+    st.session_state.username = None
+if 'bet_history' not in st.session_state or 'balance' not in st.session_state:
+    st.session_state.bet_history = pd.DataFrame(columns=[
+        'Bet ID', 'Date', 'Team A Odds', 'Team B Odds', 'Team C Odds', 
+        'Bet A', 'Bet B', 'Bet C', 'Total Profit', 'ROI', 'Balance After'
+    ])
+    st.session_state.balance = 100.0
 
 st.set_page_config(page_title="Arbitrage Calculator", layout="wide")
 st.title("Arbitrage Calculator")
@@ -122,68 +124,82 @@ with st.form(key="username_form"):
         st.session_state.bet_history, st.session_state.balance = load_user_history(username)
         st.success(f"Logged in as {username}!")
 
-# Check if user is logged in
-if not st.session_state.username:
-    st.warning("Please enter a username to continue.")
-    st.stop()
+# Main app for logged-in users
+if st.session_state.username:
+    st.subheader("Set Starting Balance")
+    with st.form(key="starting_balance_form"):
+        starting_balance = st.number_input("Starting Balance", min_value=0.0, step=1.0, value=st.session_state.balance, format="%.2f")
+        submit_balance = st.form_submit_button("Update Starting Balance")
+        if submit_balance:
+            st.session_state.balance = starting_balance
+            st.session_state.bet_history = pd.DataFrame(columns=[
+                'Bet ID', 'Date', 'Team A Odds', 'Team B Odds', 'Team C Odds', 
+                'Bet A', 'Bet B', 'Bet C', 'Total Profit', 'ROI', 'Balance After'
+            ])
+            save_user_history(st.session_state.username)
+            st.success("Starting balance updated!")
 
-st.subheader("Set Starting Balance")
-with st.form(key="starting_balance_form"):
-    starting_balance = st.number_input("Starting Balance", min_value=0.0, step=1.0, value=st.session_state.balance, format="%.2f")
-    submit_balance = st.form_submit_button("Update Starting Balance")
-    if submit_balance:
-        st.session_state.balance = starting_balance
-        st.session_state.bet_history = pd.DataFrame(columns=[
-            'Bet ID', 'Date', 'Team A Odds', 'Team B Odds', 'Team C Odds', 
-            'Bet A', 'Bet B', 'Bet C', 'Total Profit', 'ROI', 'Balance After'
-        ])
-        save_user_history(st.session_state.username)
-        st.success("Starting balance updated!")
+    st.write(f"**Current Balance**: ${st.session_state.balance:.2f}")
 
-st.write(f"**Current Balance**: ${st.session_state.balance:.2f}")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        oran_a = st.number_input("Enter odds for Team A", min_value=1.0, step=0.01, value=1.75, format="%.2f", key="logged_odds_a")
+    with col2:
+        oran_b = st.number_input("Enter odds for Team B", min_value=1.0, step=0.01, value=2.5, format="%.2f", key="logged_odds_b")
+    with col3:
+        oran_c = st.number_input("Enter odds for Team C (optional)", min_value=0.0, step=0.01, value=0.0, format="%.2f", key="logged_odds_c")
+    with col4:
+        risk_percentage = st.number_input("Risk percentage of balance", min_value=0.0, max_value=100.0, step=0.1, value=20.0, format="%.1f", key="logged_risk")
 
+    if st.button("Calculate", key="arbitraj_hesapla"):
+        arbitraj_hesapla(st.session_state.balance, risk_percentage, oran_a, oran_b, oran_c, track=True)
+
+    st.subheader("Bet History")
+    st.dataframe(st.session_state.bet_history, use_container_width=True)
+
+    st.subheader("Edit Bet History")
+    bet_id_to_edit = st.selectbox("Select Bet ID to Edit", st.session_state.bet_history['Bet ID'].tolist(), key="edit_bet_id")
+    if bet_id_to_edit:
+        bet = st.session_state.bet_history[st.session_state.bet_history['Bet ID'] == bet_id_to_edit].iloc[0]
+        with st.form(key="edit_bet_form"):
+            new_date = st.text_input("Date", value=bet['Date'])
+            new_oran_a = st.number_input("Team A Odds", min_value=1.0, step=0.01, value=float(bet['Team A Odds']), format="%.2f")
+            new_oran_b = st.number_input("Team B Odds", min_value=1.0, step=0.01, value=float(bet['Team B Odds']), format="%.2f")
+            new_oran_c = st.number_input("Team C Odds (optional)", min_value=0.0, step=0.01, value=float(bet['Team C Odds']) if pd.notnull(bet['Team C Odds']) else 0.0, format="%.2f")
+            new_bet_a = st.number_input("Bet A", min_value=0.0, step=0.01, value=float(bet['Bet A']), format="%.2f")
+            new_bet_b = st.number_input("Bet B", min_value=0.0, step=0.01, value=float(bet['Bet B']), format="%.2f")
+            new_bet_c = st.number_input("Bet C", min_value=0.0, step=0.01, value=float(bet['Bet C']) if pd.notnull(bet['Bet C']) else 0.0, format="%.2f")
+            new_profit = st.number_input("Total Profit", value=float(bet['Total Profit']), format="%.2f")
+            submit_edit = st.form_submit_button("Update Bet")
+            if submit_edit:
+                old_profit = bet['Total Profit']
+                st.session_state.balance = st.session_state.balance - old_profit + new_profit
+                st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Date'] = new_date
+                st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Team A Odds'] = new_oran_a
+                st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Team B Odds'] = new_oran_b
+                st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Team C Odds'] = new_oran_c if new_oran_c > 1.0 else None
+                st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Bet A'] = new_bet_a
+                st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Bet B'] = new_bet_b
+                st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Bet C'] = new_bet_c if new_oran_c > 1.0 else None
+                st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Total Profit'] = new_profit
+                st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Balance After'] = st.session_state.balance
+                st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'ROI'] = (new_profit / (new_bet_a + new_bet_b + (new_bet_c if new_oran_c > 1.0 else 0))) * 100 if (new_bet_a + new_bet_b + (new_bet_c if new_oran_c > 1.0 else 0)) > 0 else 0
+                save_user_history(st.session_state.username)
+                st.success("Bet updated successfully!")
+
+# Simple arbitrage calculator on login page
+st.subheader("Quick Arbitrage Calculator (No Login Required)")
+st.markdown("Calculate arbitrage opportunities without tracking or logging in.")
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    oran_a = st.number_input("Enter odds for Team A", min_value=1.0, step=0.01, value=1.75, format="%.2f")
+    quick_oran_a = st.number_input("Odds for Team A", min_value=1.0, step=0.01, value=1.75, format="%.2f", key="quick_odds_a")
 with col2:
-    oran_b = st.number_input("Enter odds for Team B", min_value=1.0, step=0.01, value=2.5, format="%.2f")
+    quick_oran_b = st.number_input("Odds for Team B", min_value=1.0, step=0.01, value=2.5, format="%.2f", key="quick_odds_b")
 with col3:
-    oran_c = st.number_input("Enter odds for Team C (optional)", min_value=0.0, step=0.01, value=0.0, format="%.2f")
+    quick_oran_c = st.number_input("Odds for Team C (optional)", min_value=0.0, step=0.01, value=0.0, format="%.2f", key="quick_odds_c")
 with col4:
-    risk_percentage = st.number_input("Risk percentage of balance", min_value=0.0, max_value=100.0, step=0.1, value=20.0, format="%.1f")
+    quick_balance = st.number_input("Total Balance", min_value=1.0, step=1.0, value=100.0, format="%.2f", key="quick_balance")
+    quick_risk_percentage = st.number_input("Risk Percentage", min_value=0.0, max_value=100.0, step=0.1, value=20.0, format="%.1f", key="quick_risk")
 
-if st.button("Calculate", key="arbitraj_hesapla"):
-    arbitraj_hesapla(st.session_state.balance, risk_percentage, oran_a, oran_b, oran_c)
-
-st.subheader("Bet History")
-st.dataframe(st.session_state.bet_history, use_container_width=True)
-
-st.subheader("Edit Bet History")
-bet_id_to_edit = st.selectbox("Select Bet ID to Edit", st.session_state.bet_history['Bet ID'].tolist(), key="edit_bet_id")
-if bet_id_to_edit:
-    bet = st.session_state.bet_history[st.session_state.bet_history['Bet ID'] == bet_id_to_edit].iloc[0]
-    with st.form(key="edit_bet_form"):
-        new_date = st.text_input("Date", value=bet['Date'])
-        new_oran_a = st.number_input("Team A Odds", min_value=1.0, step=0.01, value=float(bet['Team A Odds']), format="%.2f")
-        new_oran_b = st.number_input("Team B Odds", min_value=1.0, step=0.01, value=float(bet['Team B Odds']), format="%.2f")
-        new_oran_c = st.number_input("Team C Odds (optional)", min_value=0.0, step=0.01, value=float(bet['Team C Odds']) if pd.notnull(bet['Team C Odds']) else 0.0, format="%.2f")
-        new_bet_a = st.number_input("Bet A", min_value=0.0, step=0.01, value=float(bet['Bet A']), format="%.2f")
-        new_bet_b = st.number_input("Bet B", min_value=0.0, step=0.01, value=float(bet['Bet B']), format="%.2f")
-        new_bet_c = st.number_input("Bet C", min_value=0.0, step=0.01, value=float(bet['Bet C']) if pd.notnull(bet['Bet C']) else 0.0, format="%.2f")
-        new_profit = st.number_input("Total Profit", value=float(bet['Total Profit']), format="%.2f")
-        submit_edit = st.form_submit_button("Update Bet")
-        if submit_edit:
-            old_profit = bet['Total Profit']
-            st.session_state.balance = st.session_state.balance - old_profit + new_profit
-            st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Date'] = new_date
-            st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Team A Odds'] = new_oran_a
-            st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Team B Odds'] = new_oran_b
-            st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Team C Odds'] = new_oran_c if new_oran_c > 1.0 else None
-            st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Bet A'] = new_bet_a
-            st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Bet B'] = new_bet_b
-            st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Bet C'] = new_bet_c if new_oran_c > 1.0 else None
-            st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Total Profit'] = new_profit
-            st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'Balance After'] = st.session_state.balance
-            st.session_state.bet_history.loc[st.session_state.bet_history['Bet ID'] == bet_id_to_edit, 'ROI'] = (new_profit / (new_bet_a + new_bet_b + (new_bet_c if new_oran_c > 1.0 else 0))) * 100 if (new_bet_a + new_bet_b + (new_bet_c if new_oran_c > 1.0 else 0)) > 0 else 0
-            save_user_history(st.session_state.username)
-            st.success("Bet updated successfully!")
+if st.button("Calculate (Quick)", key="quick_arbitraj_hesapla"):
+    arbitraj_hesapla(quick_balance, quick_risk_percentage, quick_oran_a, quick_oran_b, quick_oran_c, track=False)
