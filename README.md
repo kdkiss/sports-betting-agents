@@ -19,4 +19,7 @@ pip install -r requirements.txt
 streamlit run main.py
 ```
 
+The root requirements include packages needed for all agents, including
+`langchain` and other dependencies for the Bobby Bets page.
+
 Use the sidebar to navigate between pages. Each page simply wraps the original script for its agent so you can access them all in one interface.
