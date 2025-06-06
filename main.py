@@ -12,5 +12,6 @@ Welcome! Use the navigation sidebar to access the different agents:
 - AI Sports Betting Agent
 - Bobby Bets Sports Analysis
 - Crypto Technical Analysis
+- Trading Assistant
 """
 )
