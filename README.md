@@ -30,7 +30,7 @@ Use the sidebar to navigate between pages. Each page simply wraps the original s
 
 ## Configuration
 
-Several agents require API keys which should be stored as environment variables. Create a `.env` file in the project root containing:
+Several agents require API keys. Copy `.env.example` to `.env` and fill in your values:
 
 ```
 ODDS_API_KEY=your_odds_api_key
