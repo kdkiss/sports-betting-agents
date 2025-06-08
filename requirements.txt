@@ -7,7 +7,7 @@ groq
 python-dotenv
 ccxt
 pandas_ta
-numpy<2.0
+numpy
 langchain==0.3.24
 langchain-community==0.3.23
 langchain-groq==0.3.0
